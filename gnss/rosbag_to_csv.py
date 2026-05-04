@@ -313,6 +313,7 @@ def main():
         "sensor_msgs/msg/Imu",
         "nmea_msgs/msg/Sentence",
         "gnss/fix",
+        "gps/fix",
     }
 
     writers = {}
