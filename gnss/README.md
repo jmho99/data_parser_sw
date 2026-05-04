@@ -8,11 +8,15 @@
   
   python3 rosbag_to_csv.py [ros2bag direct] -o [output name] --topics [topic name]
   
+  ex) python3 rosbag_to_csv.py ~/Downloads/rosbag2_20251113_164845/ -o csv_output --topics /gnss/fix
+  
 ### 2. .csv파일을 .kml 파일로 변환
 
   fix_csv_to_kml.py
   
   python3 fix_csv_to_kml.py [csv direct] [output name]
+  
+  ex) python3 fix_csv_to_kml.py csv_output/gnss_fix.csv gps_trajectory.kml
   
 ### 3. 구글 맵에 .kml 업로드
 
