@@ -1,0 +1,41 @@
+template:
+  name: gnss_kml
+  version: 0.1.0
+  output_type: kml
+
+document:
+  name: GNSS Trajectory
+  description: GNSS trajectory exported from ROS bag
+
+placemark:
+  name: GNSS Path
+  style_id: gnss_path_style
+
+style:
+  id: gnss_path_style
+  line:
+    color: ff0000ff
+    width: 3
+
+coordinates:
+  longitude: longitude
+  latitude: latitude
+  altitude: altitude
+
+options:
+  altitude_mode: absolute
+
+  # true이면 altitude 사용
+  # false이면 고도 0으로 저장
+  use_altitude: true
+
+  # 좌표가 비정상일 때 스킵
+  skip_invalid_coordinate: true
+
+  valid_range:
+    latitude:
+      min: -90.0
+      max: 90.0
+    longitude:
+      min: -180.0
+      max: 180.0

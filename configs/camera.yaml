@@ -1,0 +1,52 @@
+sensor:
+  name: camera
+  type: camera
+
+input:
+  # default.yaml의 input.source_type을 우선 사용
+  # 필요하면 여기서 sensor별로 override 가능
+  source_type: null
+  path: null
+
+rosbag_input:
+  topic: null
+  message_type:
+    - sensor_msgs/msg/Image
+    - sensor_msgs/msg/CompressedImage
+
+video_input:
+  frame_interval: 1
+  start_time_sec: 0
+  end_time_sec: null
+
+image_dir_input:
+  recursive: false
+  sort_by: filename
+
+output:
+  directory: camera
+
+  image:
+    enabled: true
+    extension: jpg
+    encoding: bgr8
+
+  video:
+    enabled: false
+    filename: output.mp4
+    fps: 10
+    codec: mp4v
+
+  metadata:
+    enabled: true
+    filename: camera_metadata.csv
+
+options:
+  save:
+    use_timestamp_filename: true
+
+  compressed_image:
+    auto_decode: true
+
+  ros_image:
+    use_cv_bridge: true

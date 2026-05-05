@@ -1,0 +1,34 @@
+sensor:
+  name: imu
+  type: imu
+
+input:
+  # null이면 default.yaml의 input.source_type 사용
+  # 현재는 rosbag 중심
+  source_type: null
+
+  # null이면 default.yaml의 input.path 사용
+  path: null
+
+rosbag_input:
+  topic: null
+
+  message_type:
+    - sensor_msgs/msg/Imu
+
+output:
+  directory: imu
+
+  csv:
+    enabled: true
+    filename: imu.csv
+    template: templates/imu_csv_template.yaml
+
+options:
+  include_orientation: true
+  include_angular_velocity: true
+  include_linear_acceleration: true
+  include_covariance: false
+
+  save:
+    use_timestamp: true

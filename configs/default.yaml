@@ -1,0 +1,62 @@
+app:
+  name: data_parser
+  version: 0.1.0
+
+input:
+  # rosbag, video_file, image_dir, csv_file, live_device
+  source_type: rosbag
+  path: null
+
+rosbag:
+  # auto, sqlite3, mcap
+  storage_id: auto
+  auto_find_topic: true
+
+video_file:
+  supported_extensions:
+    - .mp4
+    - .avi
+    - .mkv
+    - .mov
+
+image_dir:
+  supported_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+    - .bmp
+
+output:
+  root_dir: output
+  overwrite: false
+
+  # timestamp, index, both
+  filename_mode: timestamp
+
+time:
+  # ros_time, file_time, system_time
+  source: ros_time
+
+  # sec_nanosec, iso8601, unix_float
+  format: sec_nanosec
+
+logging:
+  level: INFO
+
+sensors:
+  camera:
+    enabled: true
+    config_file: configs/camera.yaml
+
+  lidar:
+    enabled: true
+    config_file: configs/lidar.yaml
+
+  gnss:
+    enabled: true
+    config_file: configs/gnss.yaml
+
+  imu:
+    enabled: true
+    config_file: configs/imu.yaml

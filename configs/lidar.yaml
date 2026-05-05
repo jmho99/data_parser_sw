@@ -1,0 +1,47 @@
+sensor:
+  name: lidar
+  type: pointcloud
+
+input:
+  # null이면 default.yaml의 input.source_type 사용
+  # 현재는 rosbag 중심
+  source_type: null
+
+  # null이면 default.yaml의 input.path 사용
+  path: null
+
+rosbag_input:
+  topic: null
+
+  message_type:
+    - sensor_msgs/msg/PointCloud2
+
+output:
+  directory: lidar
+
+  pcd:
+    enabled: true
+
+    # ascii, binary
+    format: binary
+
+    # pcd 파일 저장 폴더
+    subdirectory: pcd
+
+  metadata:
+    enabled: true
+    filename: lidar_metadata.csv
+
+options:
+  save:
+    use_timestamp_filename: true
+    save_frame_index: true
+
+  pointcloud:
+    fields:
+      x: true
+      y: true
+      z: true
+      intensity: true
+      ring: true
+      timestamp: true

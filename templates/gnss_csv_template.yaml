@@ -1,0 +1,49 @@
+template:
+  name: gnss_csv
+  version: 0.1.0
+  output_type: csv
+
+columns:
+  - name: timestamp_sec
+    source: header.stamp.sec
+    default: null
+
+  - name: timestamp_nanosec
+    source: header.stamp.nanosec
+    default: null
+
+  - name: latitude
+    source: latitude
+    default: null
+
+  - name: longitude
+    source: longitude
+    default: null
+
+  - name: altitude
+    source: altitude
+    default: null
+
+  - name: status
+    source: status.status
+    default: null
+
+  - name: service
+    source: status.service
+    default: null
+
+  - name: position_covariance_0
+    source: position_covariance.0
+    default: null
+
+  - name: position_covariance_4
+    source: position_covariance.4
+    default: null
+
+  - name: position_covariance_8
+    source: position_covariance.8
+    default: null
+
+  - name: covariance_type
+    source: position_covariance_type
+    default: null

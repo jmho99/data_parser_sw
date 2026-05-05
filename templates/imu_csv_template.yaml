@@ -1,0 +1,53 @@
+template:
+  name: imu_csv
+  version: 0.1.0
+  output_type: csv
+
+columns:
+  - name: timestamp_sec
+    source: header.stamp.sec
+    default: null
+
+  - name: timestamp_nanosec
+    source: header.stamp.nanosec
+    default: null
+
+  - name: orientation_x
+    source: orientation.x
+    default: null
+
+  - name: orientation_y
+    source: orientation.y
+    default: null
+
+  - name: orientation_z
+    source: orientation.z
+    default: null
+
+  - name: orientation_w
+    source: orientation.w
+    default: null
+
+  - name: angular_velocity_x
+    source: angular_velocity.x
+    default: null
+
+  - name: angular_velocity_y
+    source: angular_velocity.y
+    default: null
+
+  - name: angular_velocity_z
+    source: angular_velocity.z
+    default: null
+
+  - name: linear_acceleration_x
+    source: linear_acceleration.x
+    default: null
+
+  - name: linear_acceleration_y
+    source: linear_acceleration.y
+    default: null
+
+  - name: linear_acceleration_z
+    source: linear_acceleration.z
+    default: null

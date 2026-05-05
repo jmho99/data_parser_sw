@@ -1,0 +1,55 @@
+sensor:
+  name: gnss
+  type: gnss
+
+input:
+  # null이면 default.yaml의 input.source_type 사용
+  # rosbag, csv_file
+  source_type: null
+
+  # null이면 default.yaml의 input.path 사용
+  path: null
+
+rosbag_input:
+  topic: null
+
+  message_type:
+    - sensor_msgs/msg/NavSatFix
+    - nmea_msgs/msg/Sentence
+    - novatel_oem7_msgs/msg/BESTPOS
+
+csv_input:
+  latitude_column: latitude
+  longitude_column: longitude
+  altitude_column: altitude
+
+  timestamp_sec_column: timestamp_sec
+  timestamp_nanosec_column: timestamp_nanosec
+
+output:
+  directory: gnss
+
+  csv:
+    enabled: true
+    filename: gnss.csv
+    template: templates/gnss_csv_template.yaml
+
+  kml:
+    enabled: true
+    filename: gnss.kml
+    template: templates/kml_template.yaml
+
+options:
+  skip_invalid_fix: true
+
+  navsatfix:
+    require_valid_status: false
+
+  nmea:
+    parse_gga: true
+    parse_rmc: true
+
+  kml:
+    line_name: GNSS Trajectory
+    altitude_mode: absolute
+    use_altitude: true
