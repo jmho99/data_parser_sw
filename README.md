@@ -4,82 +4,136 @@
 
 본 프로젝트는 ROS2 기반 센서 데이터(rosbag/mcap)를 다양한 형식으로 변환하기 위한 **데이터 파서 소프트웨어**입니다.
 
-주요 목표는 다음과 같습니다:
+주요 목표:
 
 * 센서별 데이터 변환 자동화
-* CLI 기반 간편한 사용
+* CLI + GUI 동시 지원
 * 다양한 출력 포맷 지원 (csv, kml, img, pcd 등)
-* 확장 가능한 구조 (카메라, 라이다, GNSS, IMU 등 추가 가능)
-* 향후 GUI 연동을 고려한 구조 설계
+* 확장 가능한 구조 (카메라, 라이다, GNSS, IMU 등)
+* 변환 로직과 UI 분리
 
-현재는 GNSS 데이터 변환 기능을 중심으로 개발이 진행 중입니다.
+현재는 GNSS 데이터 변환과 GUI 실행 구조까지 구성된 상태입니다.
 
 ---
 
-## 2. 사용법 (현재: GNSS만 지원)
+## 2. 사용법 (현재: GNSS)
 
-현재 구현된 기능은 GNSS 데이터 변환입니다.
-
-### 기본 실행
+### 2.1 CLI 사용
 
 ```bash
 python3 main.py gnss bag-to-csv <bag_path> -o <output_path> --topics <topic_name>
 ```
 
-### 예시
+#### 예시
 
 ```bash
 python3 main.py gnss bag-to-csv ~/Downloads/rosbag2_20251113_164845/ -o csv_output --topics /gnss/fix
 ```
 
-### 주요 옵션
+---
 
-* `gnss` : 센서 타입
-* `bag-to-csv` : 변환 기능
-* `<bag_path>` : rosbag 또는 mcap 경로
-* `-o` : 출력 경로
-* `--topics` : 사용할 토픽
+### 2.2 GUI 사용
+
+현재 GUI는 `main.py`를 통해 실행되지 않으며, 모듈 실행 방식으로 구동합니다.
+
+```bash
+python3 -m data_parser.gui.app
+```
+
+#### GUI 기능
+
+* bag 경로 선택
+* topic 입력
+* 출력 경로 설정
+* GNSS CSV 변환 실행
+
+#### 특징
+
+* CLI 변환 로직을 그대로 재사용
+* GUI는 입력/실행 인터페이스 역할만 수행
+* 변환 로직은 sensors 내부 코드 사용
 
 ---
 
 ## 3. 구조
 
-프로젝트는 **센서별 모듈화 + 공용 기능 분리** 구조로 설계되어 있습니다.
-
-```
+```text
 data_parser/
 ├── main.py
 ├── data_parser/
 │   ├── cli/
+│   ├── gui/
 │   ├── core/
 │   ├── sensors/
 │   └── utils/
 ```
 
+---
+
 ### 3.1 main.py
 
-* 프로그램의 진입점 (entry point)
-* CLI 실행을 담당
-* 내부적으로 `cli/main_cli.py`를 호출
+* CLI 전용 진입점
+* GUI 실행은 포함하지 않음
+
+```bash
+python3 main.py gnss ...
+```
 
 ---
 
 ### 3.2 cli/
 
-```
+```text
 cli/
 └── main_cli.py
 ```
 
-* 전체 CLI 흐름 제어
-* 사용자 입력을 받아 센서별 기능으로 라우팅
-* 예: `gnss bag-to-csv` → gnss 모듈 호출
+* CLI 명령 처리
+* 센서 기능 호출 및 라우팅
 
 ---
 
-### 3.3 core/
+### 3.3 gui/
 
+```text
+gui/
+├── app.py
+├── main_window.py
+└── widgets/
 ```
+
+GUI 구성
+
+#### 실행 방식
+
+```bash
+python3 -m data_parser.gui.app
+```
+
+#### 역할
+
+* 사용자 입력 UI 제공
+* 내부적으로 sensors 변환 함수 호출
+
+#### 구조 흐름
+
+```text
+GUI 입력
+ → 파라미터 생성
+ → sensors/*/convert() 호출
+```
+
+#### 특징
+
+* 비즈니스 로직 없음
+* CLI와 동일한 결과 보장
+* 추후 기능 확장 시 UI만 추가하면 됨
+
+---
+
+### 3.4 core/
+
+```text
 core/
 ├── source_type.py
 ├── source_factory.py
@@ -87,31 +141,18 @@ core/
 └── export_format.py
 ```
 
-공통 핵심 로직 담당
+공통 핵심 로직
 
-* **source_type.py**
-
-  * 입력 데이터 타입 정의 (rosbag, 향후 mp4 등)
-
-* **source_factory.py**
-
-  * 입력 타입에 맞는 reader 생성
-
-* **schema_loader.py**
-
-  * config / template 기반 필드 구조 로딩
-
-* **export_format.py**
-
-  * 출력 포맷 처리 (csv, kml 등)
+* 입력 타입 관리 (rosbag 등)
+* reader 생성
+* config/template 처리
+* 출력 형식 처리
 
 ---
 
-### 3.4 sensors/
+### 3.5 sensors/
 
-센서별 변환 로직을 분리한 핵심 구조
-
-```
+```text
 sensors/
 ├── camera/
 ├── lidar/
@@ -119,88 +160,96 @@ sensors/
 └── imu/
 ```
 
-각 센서 폴더는 독립적으로 동작하며, 동일한 인터페이스 구조를 따름
+센서별 변환 모듈
 
 #### GNSS (현재 구현됨)
 
-```
+```text
 gnss/
-├── bag_to_csv.py
+└── bag_to_csv.py
 ```
 
-* `/gnss/fix` 등의 토픽을 읽어 CSV로 변환
-* 향후 KML 변환 추가 예정
+* GNSS topic → CSV 변환
 
-#### Camera (예정)
+#### 향후 확장
 
-* bag → 이미지 추출
-
-#### LiDAR (예정)
-
-* bag → PCD 변환
-
-#### IMU (예정)
-
-* bag → CSV 변환
+* GNSS → KML
+* Camera → IMG
+* LiDAR → PCD
+* IMU → CSV
 
 ---
 
-### 3.5 utils/
+### 3.6 utils/
 
-```
+```text
 utils/
 ├── path_utils.py
 ├── time_utils.py
 └── file_utils.py
 ```
 
-공용 유틸리티 함수 모음
+공용 유틸
 
-* **path_utils.py**
-
-  * 경로 생성 및 파일명 관리
-
-* **time_utils.py**
-
-  * timestamp 변환
-
-* **file_utils.py**
-
-  * 파일 저장 및 디렉토리 처리
+* 경로 처리
+* 시간 변환
+* 파일 저장
 
 ---
 
-## 4. 향후 계획
+## 4. CLI vs GUI 구조
 
-* GNSS → KML 변환 기능 추가
+```text
+[CLI]                [GUI]
+  │                    │
+  └──────┬─────────────┘
+         ↓
+   sensors/* 변환 로직
+```
+
+핵심:
+
+* CLI와 GUI는 입력 방식만 다름
+* 실제 변환 로직은 완전히 동일
+* 유지보수 및 확장 용이
+
+---
+
+## 5. 향후 계획
+
+* GNSS → KML 추가
 * LiDAR PCD 변환 구현
-* Camera 이미지 추출 기능 구현
-* IMU CSV 변환 구현
-* config / template 기반 변환 지원
-* GUI 인터페이스 추가
+* Camera 이미지 추출
+* IMU CSV 변환
+* config / template 기반 변환
+* GUI 기능 확장 (탭 분리, 자동 topic 탐색 등)
 
 ---
 
-## 5. 설계 철학
+## 6. 현재 상태
 
-* **센서별 독립 구조**
-* **공통 기능 분리**
-* **확장성 우선**
-* **CLI → GUI 확장 가능 구조**
-
----
-
-## 6. 현재 상태 요약
-
-| 기능           | 상태     |
-| ------------ | ------ |
-| GNSS CSV 변환  | ✅ 구현됨  |
-| GNSS KML     | ⏳ 예정   |
-| Camera       | ⏳ 예정   |
-| LiDAR        | ⏳ 예정   |
-| IMU          | ⏳ 예정   |
-| Config 기반 처리 | ⏳ 설계 중 |
+| 기능       | 상태           |
+| -------- | ------------ |
+| GNSS CSV | ✅            |
+| GUI 실행   | ✅ (모듈 실행 방식) |
+| GNSS KML | ⏳            |
+| Camera   | ⏳            |
+| LiDAR    | ⏳            |
+| IMU      | ⏳            |
 
 ---
 
-필요한 기능이나 구조 변경은 언제든지 확장 가능하도록 설계되어 있습니다.
+## 7. 설계 철학
+
+* 로직(UI) 분리
+* 센서별 독립 구조
+* 확장성 우선
+* CLI → GUI 자연 확장
+
+---
+
+현재 구조를 유지하면
+👉 변환 기능 추가 시 sensors만 수정
+👉 GUI/CLI는 그대로 재사용 가능
+
+이라는 장점이 있습니다.
