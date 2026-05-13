@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import argparse
 
-from data_parser.cli.gnss_cli import add_gnss_subparser, run_gnss_command
+from data_parser.cli.gnss_cli import add_gnss_subparser
+from data_parser.cli.camera_cli import add_camera_subparser
+from data_parser.cli.imu_cli import add_imu_subparser
+from data_parser.cli.lidar_cli import add_lidar_subparser
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="data_parser",
         description="Sensor data parser CLI",
@@ -14,13 +19,24 @@ def main():
         required=True,
     )
 
-    # GNSS 명령어 등록
     add_gnss_subparser(subparsers)
+    add_camera_subparser(subparsers)
+    add_lidar_subparser(subparsers)
+    add_imu_subparser(subparsers)
 
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
-    # GNSS 명령어 실행
-    if run_gnss_command(args):
+    if hasattr(args, "func"):
+        args.func(args)
         return
 
     parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

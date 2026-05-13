@@ -18,6 +18,7 @@ video_file:
     - .avi
     - .mkv
     - .mov
+    - .webm
 
 image_dir:
   supported_extensions:

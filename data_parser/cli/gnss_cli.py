@@ -81,7 +81,7 @@ def run_gnss_command(args: argparse.Namespace) -> bool:
         return True
 
     if command == "csv-to-kml":
-        from data_parser.sensors.gnss.bag_to_kml import fix_csv_to_kml
+        from JMH_WS.Github_archive.data_parser.data_parser.sensors.gnss.csv_to_kml import fix_csv_to_kml
 
         fix_csv_to_kml(
             input_csv=args.input,
@@ -93,7 +93,7 @@ def run_gnss_command(args: argparse.Namespace) -> bool:
         return True
 
     if command == "bag-to-kml":
-        from data_parser.sensors.gnss.bag_to_kml import bag_to_kml
+        from JMH_WS.Github_archive.data_parser.data_parser.sensors.gnss.csv_to_kml import bag_to_kml
 
         bag_to_kml(
             bag_path=args.input,

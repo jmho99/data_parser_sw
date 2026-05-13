@@ -13,15 +13,19 @@ from PySide6.QtWidgets import (
 )
 
 from data_parser.gui.pages import GNSSPage
-
+from data_parser.gui.pages.camera_page import CameraPage
+from data_parser.gui.pages.imu_page import IMUPage
+from data_parser.gui.pages.lidar_page import LiDARPage
 
 class MainWindow(QMainWindow):
     """
     Data Parser GUI 메인 윈도우.
 
     현재 상태:
-    - GNSS만 활성화
-    - Camera / LiDAR / IMU는 비활성화
+    - GNSS 활성화
+    - Camera 활성화
+    - IMU 활성화
+    - LIDAR 활성화
     """
 
     def __init__(self) -> None:
@@ -77,27 +81,18 @@ class MainWindow(QMainWindow):
             },
             {
                 "button_text": "Camera",
-                "widget": self._create_disabled_page(
-                    "Camera",
-                    "Camera 기능은 아직 GUI에 연결하지 않았습니다.",
-                ),
-                "enabled": False,
+                "widget": CameraPage(),
+                "enabled": True,
             },
             {
                 "button_text": "LiDAR",
-                "widget": self._create_disabled_page(
-                    "LiDAR",
-                    "LiDAR 기능은 아직 GUI에 연결하지 않았습니다.",
-                ),
-                "enabled": False,
+                "widget": LiDARPage(),
+                "enabled": True,
             },
             {
                 "button_text": "IMU",
-                "widget": self._create_disabled_page(
-                    "IMU",
-                    "IMU 기능은 아직 GUI에 연결하지 않았습니다.",
-                ),
-                "enabled": False,
+                "widget": IMUPage(),
+                "enabled": True,
             },
         ]
 
@@ -224,6 +219,14 @@ class MainWindow(QMainWindow):
             }
 
             QComboBox {
+                background-color: #ffffff;
+                border: 1px solid #d7dce5;
+                border-radius: 6px;
+                padding: 7px 9px;
+                font-size: 13px;
+            }
+
+            QSpinBox {
                 background-color: #ffffff;
                 border: 1px solid #d7dce5;
                 border-radius: 6px;

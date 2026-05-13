@@ -33,6 +33,7 @@ class GNSSPage(QWidget):
         # Bag → CSV/KML 탭
         self.bag_input_path_edit = QLineEdit()
         self.bag_output_dir_edit = QLineEdit()
+        self.bag_output_name_edit = QLineEdit()
         self.bag_topic_edit = QLineEdit("/gnss/fix")
         self.bag_format_combo = QComboBox()
         self.bag_run_button = QPushButton("Run Bag Convert")
@@ -47,6 +48,7 @@ class GNSSPage(QWidget):
         self.log_viewer = QTextEdit()
 
         self._setup_ui()
+        self._update_bag_format_ui()
 
     def _setup_ui(self) -> None:
         root_layout = QVBoxLayout(self)
@@ -103,12 +105,14 @@ class GNSSPage(QWidget):
 
         self.bag_input_path_edit.setPlaceholderText("rosbag 폴더 경로")
         self.bag_output_dir_edit.setPlaceholderText("출력 폴더 경로")
+        self.bag_output_name_edit.setPlaceholderText("KML 파일 이름, 예: gnss_path")
         self.bag_topic_edit.setPlaceholderText("/gnss/fix")
 
         self.bag_format_combo.addItems(["csv", "kml"])
 
         form_layout.addRow("Input rosbag", bag_input_layout)
         form_layout.addRow("Output folder", bag_output_layout)
+        form_layout.addRow("KML name", self.bag_output_name_edit)
         form_layout.addRow("Topic", self.bag_topic_edit)
         form_layout.addRow("Format", self.bag_format_combo)
 
@@ -120,6 +124,7 @@ class GNSSPage(QWidget):
 
         bag_input_browse_button.clicked.connect(self._browse_bag_input_path)
         bag_output_browse_button.clicked.connect(self._browse_bag_output_dir)
+        self.bag_format_combo.currentTextChanged.connect(self._update_bag_format_ui)
         self.bag_run_button.clicked.connect(self._run_bag_conversion)
 
         return tab
@@ -167,6 +172,17 @@ class GNSSPage(QWidget):
 
         return tab
 
+    def _update_bag_format_ui(self) -> None:
+        export_format = self.bag_format_combo.currentText()
+        is_kml = export_format == "kml"
+
+        self.bag_output_name_edit.setEnabled(is_kml)
+
+        if is_kml:
+            self.bag_output_name_edit.setPlaceholderText("KML 파일 이름, 예: gnss_path")
+        else:
+            self.bag_output_name_edit.setPlaceholderText("CSV 선택 시 파일명은 토픽명 기준으로 자동 저장")
+
     def _browse_bag_input_path(self) -> None:
         selected_dir = QFileDialog.getExistingDirectory(
             self,
@@ -175,6 +191,9 @@ class GNSSPage(QWidget):
 
         if selected_dir:
             self.bag_input_path_edit.setText(selected_dir)
+
+            if not self.bag_output_name_edit.text().strip():
+                self.bag_output_name_edit.setText(Path(selected_dir).name)
 
     def _browse_bag_output_dir(self) -> None:
         selected_dir = QFileDialog.getExistingDirectory(
@@ -208,9 +227,30 @@ class GNSSPage(QWidget):
         if selected_dir:
             self.csv_output_dir_edit.setText(selected_dir)
 
+    def _normalize_output_name(self, output_name: str, suffix: str = ".kml") -> str:
+        name = output_name.strip()
+
+        if name.lower().endswith(suffix):
+            name = name[: -len(suffix)]
+
+        name = name.strip()
+
+        if "/" in name or "\\" in name:
+            raise ValueError("파일 이름에는 경로 구분자를 넣지 마세요. 파일 이름만 입력해야 합니다.")
+
+        return name
+
+    def _parse_topics(self, topic_text: str) -> list[str]:
+        return [
+            topic.strip()
+            for topic in topic_text.split(",")
+            if topic.strip()
+        ]
+
     def _run_bag_conversion(self) -> None:
         input_path = self.bag_input_path_edit.text().strip()
         output_dir = self.bag_output_dir_edit.text().strip()
+        output_name = self.bag_output_name_edit.text().strip()
         topic_text = self.bag_topic_edit.text().strip()
         export_format = self.bag_format_combo.currentText()
 
@@ -236,13 +276,28 @@ class GNSSPage(QWidget):
             self._log(f"[ERROR] rosbag 입력은 폴더여야 합니다: {input_path}")
             return
 
-        topics = [topic.strip() for topic in topic_text.split(",") if topic.strip()]
+        topics = self._parse_topics(topic_text)
+
+        try:
+            if export_format == "kml":
+                output_name = self._normalize_output_name(output_name, ".kml")
+
+                if not output_name:
+                    self._log("[ERROR] KML 파일 이름을 입력해야 합니다.")
+                    return
+
+        except ValueError as exc:
+            self._log(f"[ERROR] {exc}")
+            return
 
         self._log("[INFO] Bag 변환 시작")
         self._log(f"[INFO] input: {input_path}")
-        self._log(f"[INFO] output: {output_dir}")
+        self._log(f"[INFO] output folder: {output_dir}")
         self._log(f"[INFO] topics: {topics}")
         self._log(f"[INFO] format: {export_format}")
+
+        if export_format == "kml":
+            self._log(f"[INFO] kml name: {output_name}")
 
         self.bag_run_button.setEnabled(False)
 
@@ -263,11 +318,16 @@ class GNSSPage(QWidget):
                     convert_gnss_bag_to_kml,
                 )
 
-                convert_gnss_bag_to_kml(
+                result = convert_gnss_bag_to_kml(
                     bag_path=input_path,
-                    output_dir=output_dir,
+                    output_path=output_dir,
+                    output_name=output_name,
                     topics=topics,
+                    keep_csv=True,
                 )
+
+                self._log(f"[DONE] CSV 저장: {result['csv_path']}")
+                self._log(f"[DONE] KML 저장: {result['kml_path']}")
 
             else:
                 self._log(f"[ERROR] 지원하지 않는 형식입니다: {export_format}")
@@ -304,7 +364,6 @@ class GNSSPage(QWidget):
             return
 
         csv_path_obj = Path(csv_path)
-        output_dir_obj = Path(output_dir)
 
         if not csv_path_obj.exists():
             self._log(f"[ERROR] CSV 파일이 존재하지 않습니다: {csv_path}")
@@ -314,32 +373,33 @@ class GNSSPage(QWidget):
             self._log(f"[ERROR] CSV 입력은 파일이어야 합니다: {csv_path}")
             return
 
-        if "/" in output_name or "\\" in output_name:
-            self._log("[ERROR] KML 이름에는 경로 구분자를 넣지 마세요. 파일 이름만 입력해야 합니다.")
+        try:
+            output_name = self._normalize_output_name(output_name, ".kml")
+        except ValueError as exc:
+            self._log(f"[ERROR] {exc}")
             return
 
-        if output_name.lower().endswith(".kml"):
-            output_name = output_name[:-4]
-
-        output_dir_obj.mkdir(parents=True, exist_ok=True)
-        output_kml_path = output_dir_obj / f"{output_name}.kml"
+        if not output_name:
+            self._log("[ERROR] KML 파일 이름을 입력해야 합니다.")
+            return
 
         self._log("[INFO] CSV → KML 변환 시작")
         self._log(f"[INFO] input csv: {csv_path}")
-        self._log(f"[INFO] output kml: {output_kml_path}")
+        self._log(f"[INFO] output folder: {output_dir}")
+        self._log(f"[INFO] kml name: {output_name}")
 
         self.csv_run_button.setEnabled(False)
 
         try:
-            from data_parser.sensors.gnss.bag_to_kml import (
-                fix_csv_to_kml,
-            )
-    
-            fix_csv_to_kml(
+            from data_parser.sensors.gnss.csv_to_kml import csv_to_kml
+
+            output_kml_path = csv_to_kml(
                 input_csv=csv_path,
-                output_kml=str(output_kml_path),
+                output_path=output_dir,
+                output_name=output_name,
             )
-    
+
+            self._log(f"[DONE] KML 저장: {output_kml_path}")
             self._log("[DONE] CSV → KML 변환 완료")
 
         except ImportError as exc:
@@ -347,7 +407,7 @@ class GNSSPage(QWidget):
             self._log(str(exc))
             self._log(
                 "[HINT] data_parser/sensors/gnss/csv_to_kml.py 안에 "
-                "convert_gnss_csv_to_kml 함수가 필요합니다."
+                "csv_to_kml 함수가 필요합니다."
             )
 
         except Exception as exc:

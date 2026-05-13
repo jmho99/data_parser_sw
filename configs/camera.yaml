@@ -23,12 +23,35 @@ image_dir_input:
   recursive: false
   sort_by: filename
 
+formats:
+  image:
+    - png
+    - jpg
+
+  video:
+    - mp4
+    - avi
+    - webm
+    - mkv
+
+defaults:
+  image_format: png
+  video_format: mp4
+  video_fps: 10
+  every_n: 1
+
+video_codecs:
+  mp4: mp4v
+  avi: MJPG
+  webm: VP80
+  mkv: XVID
+
 output:
   directory: camera
 
   image:
     enabled: true
-    extension: jpg
+    extension: png
     encoding: bgr8
 
   video:

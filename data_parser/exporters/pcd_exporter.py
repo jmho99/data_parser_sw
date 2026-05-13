@@ -1,15 +1,32 @@
+from __future__ import annotations
+
+import struct
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, Union
+from typing import Any, Iterable, Optional, Sequence, Union
+
+from sensor_msgs.msg import PointField
 
 from data_parser.utils.path_utils import ensure_parent_dir, to_path
 
 
 PathLike = Union[str, Path]
 
-DEFAULT_FIELD_ORDER = ["x", "y", "z", "intensity", "rgb"]
+DEFAULT_FIELD_ORDER = ["x", "y", "z", "intensity", "ring", "t", "time", "timestamp", "rgb"]
 
 
-def _to_list(points):
+POINTFIELD_TO_PCD = {
+    PointField.INT8: ("1", "I", "b"),
+    PointField.UINT8: ("1", "U", "B"),
+    PointField.INT16: ("2", "I", "h"),
+    PointField.UINT16: ("2", "U", "H"),
+    PointField.INT32: ("4", "I", "i"),
+    PointField.UINT32: ("4", "U", "I"),
+    PointField.FLOAT32: ("4", "F", "f"),
+    PointField.FLOAT64: ("8", "F", "d"),
+}
+
+
+def _to_list(points: Iterable) -> list[Any]:
     if hasattr(points, "tolist"):
         return points.tolist()
 
@@ -29,7 +46,7 @@ def _default_fields_from_column_count(column_count: int) -> list[str]:
 def _normalize_points(
     points: Iterable,
     fields: Optional[Sequence[str]] = None,
-):
+) -> tuple[list[list[Any]], list[str]]:
     rows = _to_list(points)
 
     if not rows:
@@ -69,55 +86,232 @@ def _normalize_points(
     return normalized, list(fields)
 
 
-def export_pcd(
-    points: Iterable,
-    output_path: PathLike,
-    fields: Optional[Sequence[str]] = None,
-) -> Path:
-    """
-    PointCloud 데이터를 ASCII PCD로 저장.
+def _default_field_specs(fields: Sequence[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": field,
+            "datatype": PointField.FLOAT32,
+            "count": 1,
+        }
+        for field in fields
+    ]
 
-    지원 입력:
-        [[x, y, z], ...]
-        [[x, y, z, intensity], ...]
-        [{"x": 1, "y": 2, "z": 3, "intensity": 10}, ...]
 
-    ROS PointCloud2 메시지 파싱은 여기서 하지 않고,
-    sensors/lidar/bag_to_pcd.py에서 points 형태로 변환한 뒤 넘기는 것을 권장.
-    """
-    path = to_path(output_path)
-    ensure_parent_dir(path)
+def _normalize_field_specs(
+    fields: Sequence[str],
+    field_specs: Optional[Sequence[dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    if field_specs is None:
+        return _default_field_specs(fields)
 
-    rows, fields = _normalize_points(points, fields)
-    point_count = len(rows)
+    spec_map = {spec["name"]: spec for spec in field_specs}
+    normalized = []
 
-    size = ["4"] * len(fields)
-    field_type = ["F"] * len(fields)
-    count = ["1"] * len(fields)
+    for field in fields:
+        if field in spec_map:
+            spec = dict(spec_map[field])
+            spec.setdefault("count", 1)
+            normalized.append(spec)
+        else:
+            normalized.append(
+                {
+                    "name": field,
+                    "datatype": PointField.FLOAT32,
+                    "count": 1,
+                }
+            )
 
-    header = "\n".join(
+    return normalized
+
+
+def _pcd_layout_from_specs(
+    specs: Sequence[dict[str, Any]],
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    field_names: list[str] = []
+    sizes: list[str] = []
+    types: list[str] = []
+    counts: list[str] = []
+
+    for spec in specs:
+        datatype = spec.get("datatype", PointField.FLOAT32)
+        size, pcd_type, _ = POINTFIELD_TO_PCD.get(
+            datatype,
+            POINTFIELD_TO_PCD[PointField.FLOAT32],
+        )
+
+        field_names.append(str(spec["name"]))
+        sizes.append(size)
+        types.append(pcd_type)
+        counts.append(str(int(spec.get("count", 1))))
+
+    return field_names, sizes, types, counts
+
+
+def _make_header(
+    point_count: int,
+    field_names: Sequence[str],
+    sizes: Sequence[str],
+    types: Sequence[str],
+    counts: Sequence[str],
+    pcd_format: str,
+) -> str:
+    return "\n".join(
         [
             "# .PCD v0.7 - Point Cloud Data file format",
             "VERSION 0.7",
-            f"FIELDS {' '.join(fields)}",
-            f"SIZE {' '.join(size)}",
-            f"TYPE {' '.join(field_type)}",
-            f"COUNT {' '.join(count)}",
+            f"FIELDS {' '.join(field_names)}",
+            f"SIZE {' '.join(sizes)}",
+            f"TYPE {' '.join(types)}",
+            f"COUNT {' '.join(counts)}",
             f"WIDTH {point_count}",
             "HEIGHT 1",
             "VIEWPOINT 0 0 0 1 0 0 0",
             f"POINTS {point_count}",
-            "DATA ascii",
+            f"DATA {pcd_format}",
         ]
     )
 
+
+def _write_ascii(path: Path, header: str, rows: Sequence[Sequence[Any]]) -> None:
     with path.open("w", encoding="utf-8") as f:
         f.write(header)
         f.write("\n")
 
         for row in rows:
-            values = [str(float(value)) for value in row]
+            values = [str(value) for value in row]
             f.write(" ".join(values))
             f.write("\n")
+
+
+def _struct_format_from_specs(specs: Sequence[dict[str, Any]]) -> str:
+    format_chars: list[str] = []
+
+    for spec in specs:
+        datatype = spec.get("datatype", PointField.FLOAT32)
+        count = int(spec.get("count", 1))
+        _, _, struct_char = POINTFIELD_TO_PCD.get(
+            datatype,
+            POINTFIELD_TO_PCD[PointField.FLOAT32],
+        )
+
+        format_chars.extend([struct_char] * count)
+
+    return "<" + "".join(format_chars)
+
+
+def _flatten_binary_row(
+    row: Sequence[Any],
+    specs: Sequence[dict[str, Any]],
+) -> list[Any]:
+    flattened: list[Any] = []
+
+    for value, spec in zip(row, specs):
+        count = int(spec.get("count", 1))
+
+        if count == 1:
+            if hasattr(value, "item"):
+                value = value.item()
+
+            flattened.append(value)
+            continue
+
+        if hasattr(value, "tolist"):
+            values = value.tolist()
+        else:
+            values = list(value)
+
+        if len(values) != count:
+            raise ValueError(
+                f"Field {spec['name']} requires {count} values, got {len(values)}"
+            )
+
+        flattened.extend(values)
+
+    return flattened
+
+
+def _write_binary(
+    path: Path,
+    header: str,
+    rows: Sequence[Sequence[Any]],
+    specs: Sequence[dict[str, Any]],
+) -> None:
+    row_struct = struct.Struct(_struct_format_from_specs(specs))
+
+    with path.open("wb") as f:
+        f.write(header.encode("utf-8"))
+        f.write(b"\n")
+
+        for row in rows:
+            flattened = _flatten_binary_row(row, specs)
+            f.write(row_struct.pack(*flattened))
+
+
+def _write_binary_compressed(
+    path: Path,
+    header: str,
+    rows: Sequence[Sequence[Any]],
+    specs: Sequence[dict[str, Any]],
+) -> None:
+    """
+    binary_compressed 연결용 placeholder.
+
+    현재는 CLI/GUI/exporter 선택 구조만 연결해둔다.
+    실제 압축 저장이 필요하면 PCD binary_compressed 규격에 맞춰
+    compressed_size, uncompressed_size, compressed data block을 작성하면 된다.
+    """
+    raise NotImplementedError(
+        "binary_compressed PCD export is connected but not implemented yet. "
+        "Use ascii or binary."
+    )
+
+
+def export_pcd(
+    points: Iterable,
+    output_path: PathLike,
+    fields: Optional[Sequence[str]] = None,
+    field_specs: Optional[Sequence[dict[str, Any]]] = None,
+    pcd_format: str = "ascii",
+) -> Path:
+    """
+    PointCloud 데이터를 PCD로 저장.
+
+    지원 format:
+        - ascii
+        - binary
+        - binary_compressed: 함수 연결만 되어 있고 내부 구현은 placeholder
+
+    ROS PointCloud2 메시지 파싱은 여기서 하지 않고,
+    sensors/lidar/bag_to_pcd.py에서 points 형태로 변환한 뒤 넘긴다.
+    """
+    path = to_path(output_path)
+    ensure_parent_dir(path)
+
+    pcd_format = pcd_format.lower().strip()
+
+    if pcd_format not in {"ascii", "binary", "binary_compressed"}:
+        raise ValueError(f"Unsupported PCD format: {pcd_format}")
+
+    rows, fields = _normalize_points(points, fields)
+    specs = _normalize_field_specs(fields, field_specs)
+    point_count = len(rows)
+
+    field_names, sizes, types, counts = _pcd_layout_from_specs(specs)
+
+    header = _make_header(
+        point_count=point_count,
+        field_names=field_names,
+        sizes=sizes,
+        types=types,
+        counts=counts,
+        pcd_format=pcd_format,
+    )
+
+    if pcd_format == "ascii":
+        _write_ascii(path, header, rows)
+    elif pcd_format == "binary":
+        _write_binary(path, header, rows, specs)
+    elif pcd_format == "binary_compressed":
+        _write_binary_compressed(path, header, rows, specs)
 
     return path

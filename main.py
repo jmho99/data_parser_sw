@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 
-"""
-Data Parser 실행 진입점.
+from __future__ import annotations
 
-사용 예:
-    python main.py
-    python main.py --config configs/default.yaml
-    python main.py camera bag-to-img --input ./bags/sample --output ./output
-"""
+import sys
 
-from data_parser.cli.main_cli import main
+
+def main() -> None:
+    if len(sys.argv) >= 2 and sys.argv[1] == "gui":
+        from data_parser.gui.app import main as gui_main
+
+        gui_main()
+        return
+
+    from data_parser.cli.main_cli import main as cli_main
+
+    cli_main()
 
 
 if __name__ == "__main__":

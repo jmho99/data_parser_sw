@@ -23,7 +23,7 @@ output:
     enabled: true
 
     # ascii, binary
-    format: binary
+    format: ascii
 
     # pcd 파일 저장 폴더
     subdirectory: pcd
@@ -45,3 +45,5 @@ options:
       intensity: true
       ring: true
       timestamp: true
+      time: false
+      t: false
