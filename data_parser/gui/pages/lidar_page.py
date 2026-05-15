@@ -2,14 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFileDialog,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -18,12 +13,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from data_parser.gui.widgets import (
+    ChoiceBar,
+    SensorPageShell,
+    SummaryPanel,
+    make_field_row,
+    make_path_input,
+)
 
 class LiDARPage(QWidget):
     """
     LiDAR 변환 GUI 페이지.
 
-    현재 기능:
+    현재 지원:
     - Bag → PCD
     - PointCloud2 topic 입력
     - ascii/binary PCD 저장 선택
@@ -38,8 +40,31 @@ class LiDARPage(QWidget):
         self.output_dir_edit = QLineEdit()
         self.topic_edit = QLineEdit("/ouster/points")
 
-        self.pcd_format_combo = QComboBox()
-        self.field_preset_combo = QComboBox()
+        self.pcd_format_choice = ChoiceBar(
+            [
+                ("ascii", "ascii"),
+                ("binary", "binary"),
+            ],
+            exclusive=True,
+            default="ascii",
+        )
+
+        self.field_choice = ChoiceBar(
+            [
+                ("x", "x"),
+                ("y", "y"),
+                ("z", "z"),
+                ("intensity", "intensity"),
+                ("ring", "ring"),
+                ("time", "time"),
+                ("all fields", "all"),
+                ("custom", "custom"),
+            ],
+            exclusive=False,
+            checked_values=["x", "y", "z"],
+            disabled_values=["x", "y", "z"],
+        )
+
         self.custom_fields_edit = QLineEdit()
 
         self.every_n_spin = QSpinBox()
@@ -49,61 +74,21 @@ class LiDARPage(QWidget):
         self.skip_nans_check = QCheckBox("Skip NaN points")
         self.timestamp_filename_check = QCheckBox("Use timestamp filename")
 
-        self.run_button = QPushButton("Run Bag to PCD")
+        self.bag_pcd_summary_panel = SummaryPanel()
+
+        self.run_button = QPushButton("Bag → PCD 변환 시작")
         self.log_viewer = QTextEdit()
 
+        self._setup_default_values()
         self._setup_ui()
         self._update_field_ui()
         self._update_end_index_ui()
 
-    def _setup_ui(self) -> None:
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(36, 32, 36, 32)
-        root_layout.setSpacing(18)
-
-        title_label = QLabel("LiDAR Converter")
-        title_label.setObjectName("PageTitle")
-
-        description_label = QLabel(
-            "LiDAR PointCloud2 rosbag 데이터를 PCD 파일로 변환합니다."
-        )
-        description_label.setObjectName("PageDescription")
-
-        root_layout.addWidget(title_label)
-        root_layout.addWidget(description_label)
-
-        form_widget = QWidget()
-        form_layout = QFormLayout(form_widget)
-        form_layout.setLabelAlignment(Qt.AlignLeft)
-        form_layout.setFormAlignment(Qt.AlignTop)
-        form_layout.setHorizontalSpacing(16)
-        form_layout.setVerticalSpacing(12)
-
-        bag_input_layout = QHBoxLayout()
-        bag_input_browse_button = QPushButton("Browse")
-        bag_input_layout.addWidget(self.bag_input_path_edit)
-        bag_input_layout.addWidget(bag_input_browse_button)
-
-        output_layout = QHBoxLayout()
-        output_browse_button = QPushButton("Browse")
-        output_layout.addWidget(self.output_dir_edit)
-        output_layout.addWidget(output_browse_button)
-
+    def _setup_default_values(self) -> None:
         self.bag_input_path_edit.setPlaceholderText("rosbag 폴더 경로")
         self.output_dir_edit.setPlaceholderText("PCD 출력 폴더 경로")
         self.topic_edit.setPlaceholderText("/ouster/points")
 
-        self.pcd_format_combo.addItems(["ascii", "binary"])
-        self.field_preset_combo.addItems(
-            [
-                "xyz",
-                "xyz + intensity",
-                "xyz + intensity + ring",
-                "xyz + intensity + ring + time",
-                "all fields",
-                "custom",
-            ]
-        )
         self.custom_fields_edit.setPlaceholderText("예: x,y,z,intensity,ring,t")
 
         self.every_n_spin.setRange(1, 1_000_000)
@@ -118,43 +103,79 @@ class LiDARPage(QWidget):
         self.skip_nans_check.setChecked(True)
         self.timestamp_filename_check.setChecked(True)
 
-        form_layout.addRow("Input rosbag", bag_input_layout)
-        form_layout.addRow("Output folder", output_layout)
-        form_layout.addRow("Topic", self.topic_edit)
-        form_layout.addRow("PCD format", self.pcd_format_combo)
-        form_layout.addRow("Fields", self.field_preset_combo)
-        form_layout.addRow("Custom fields", self.custom_fields_edit)
-        form_layout.addRow("Every N frames", self.every_n_spin)
-        form_layout.addRow("Start index", self.start_index_spin)
-        form_layout.addRow("", self.use_end_index_check)
-        form_layout.addRow("End index", self.end_index_spin)
-        form_layout.addRow("", self.skip_nans_check)
-        form_layout.addRow("", self.timestamp_filename_check)
+    def _setup_ui(self) -> None:
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        root_layout.addWidget(form_widget)
+        self.shell = SensorPageShell(
+            title_ko="라이다",
+            title_en="LiDAR",
+            description="LiDAR PointCloud2 rosbag 데이터를 PCD 파일로 변환합니다.",
+            icon_name="lidar",
+            conversion_count=1,
+            topics=["/ouster/points"],
+        )
 
-        self.run_button.setFixedHeight(38)
-        root_layout.addWidget(self.run_button)
-
-        log_label = QLabel("Log")
-        log_label.setObjectName("SectionTitle")
-        root_layout.addWidget(log_label)
+        self.shell.add_mode(
+            key="bag_pcd",
+            label="Bag → PCD",
+            settings_widget=self._create_bag_pcd_settings(),
+            summary_widget=self.bag_pcd_summary_panel,
+            run_button=self.run_button,
+        )
 
         self.log_viewer.setReadOnly(True)
-        self.log_viewer.setMinimumHeight(220)
-        root_layout.addWidget(self.log_viewer, stretch=1)
+        self.shell.set_log_widget(self.log_viewer)
 
-        bag_input_browse_button.clicked.connect(self._browse_bag_input_path)
-        output_browse_button.clicked.connect(self._browse_output_dir)
-        self.field_preset_combo.currentTextChanged.connect(self._update_field_ui)
+        root_layout.addWidget(self.shell)
+
+        self.bag_input_path_edit.textChanged.connect(self.shell.set_selected_source_path)
+        self.field_choice.changed.connect(self._update_field_ui)
         self.use_end_index_check.stateChanged.connect(self._update_end_index_ui)
+        
+        self._connect_summary_signals()
+        self._update_summary()
         self.run_button.clicked.connect(self._run_conversion)
 
+    def _create_bag_pcd_settings(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 8, 16, 16)
+        layout.setSpacing(12)
+
+        browse_input = QPushButton("Browse")
+        browse_output = QPushButton("Browse")
+
+        layout.addWidget(make_field_row(
+            "입력 rosbag",
+            "Input rosbag",
+            make_path_input(self.bag_input_path_edit, browse_input),
+        ))
+        layout.addWidget(make_field_row(
+            "출력 폴더",
+            "Output folder",
+            make_path_input(self.output_dir_edit, browse_output),
+        ))
+        layout.addWidget(make_field_row("토픽", "Topic", self.topic_edit))
+        layout.addWidget(make_field_row("PCD 포맷", "PCD format", self.pcd_format_choice))
+        layout.addWidget(make_field_row("필드 프리셋", "Fields", self.field_choice))
+        layout.addWidget(make_field_row("사용자 필드", "Custom fields", self.custom_fields_edit))
+        layout.addWidget(make_field_row("프레임 간격", "Every N frames", self.every_n_spin))
+        layout.addWidget(make_field_row("시작 인덱스", "Start index", self.start_index_spin))
+        layout.addWidget(make_field_row("종료 사용", "Use end index", self.use_end_index_check))
+        layout.addWidget(make_field_row("종료 인덱스", "End index", self.end_index_spin))
+        layout.addWidget(make_field_row("NaN 제거", "Skip NaN points", self.skip_nans_check))
+        layout.addWidget(make_field_row("파일명", "Timestamp filename", self.timestamp_filename_check))
+        layout.addStretch(1)
+
+        browse_input.clicked.connect(self._browse_bag_input_path)
+        browse_output.clicked.connect(self._browse_output_dir)
+
+        return widget
+
     def _browse_bag_input_path(self) -> None:
-        selected_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select rosbag folder",
-        )
+        selected_dir = QFileDialog.getExistingDirectory(self, "Select rosbag folder")
 
         if selected_dir:
             self.bag_input_path_edit.setText(selected_dir)
@@ -163,52 +184,152 @@ class LiDARPage(QWidget):
                 self.output_dir_edit.setText(str(Path(selected_dir) / "pcd"))
 
     def _browse_output_dir(self) -> None:
-        selected_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select output folder",
-        )
+        selected_dir = QFileDialog.getExistingDirectory(self, "Select output folder")
 
         if selected_dir:
             self.output_dir_edit.setText(selected_dir)
 
     def _update_field_ui(self) -> None:
-        is_custom = self.field_preset_combo.currentText() == "custom"
+        selected = self.field_choice.selected_values()
+        is_custom = "custom" in selected and "all" not in selected
         self.custom_fields_edit.setEnabled(is_custom)
 
+    def _connect_summary_signals(self) -> None:
+        for editor in (
+            self.bag_input_path_edit,
+            self.output_dir_edit,
+            self.topic_edit,
+            self.custom_fields_edit,
+        ):
+            editor.textChanged.connect(lambda *_: self._update_summary())
+    
+        for choice in (
+            self.pcd_format_choice,
+            self.field_choice,
+        ):
+            choice.changed.connect(lambda *_: self._update_summary())
+    
+        for spin in (
+            self.every_n_spin,
+            self.start_index_spin,
+            self.end_index_spin,
+        ):
+            spin.valueChanged.connect(lambda *_: self._update_summary())
+    
+        for checkbox in (
+            self.use_end_index_check,
+            self.skip_nans_check,
+            self.timestamp_filename_check,
+        ):
+            checkbox.stateChanged.connect(lambda *_: self._update_summary())
+
+    
+    def _update_summary(self) -> None:
+        pcd_format = self.pcd_format_choice.selected_value() or "ascii"
+    
+        self.bag_pcd_summary_panel.update_summary(
+            sensor="LiDAR",
+            mode="bag → pcd",
+            input_path=self.bag_input_path_edit.text(),
+            output_path=self.output_dir_edit.text(),
+            topic=self.topic_edit.text(),
+            fmt=pcd_format,
+            extra=(
+                f"저장 필드: {self._selected_fields_text()}; "
+                f"프레임 간격: {self.every_n_spin.value()}; "
+                f"시작 인덱스: {self.start_index_spin.value()}; "
+                f"종료 인덱스: {self._end_index_text()}; "
+                f"NaN 제거: {self._bool_text(self.skip_nans_check.isChecked())}; "
+                f"파일명: {self._filename_mode_text()}"
+            ),
+        )
+
+
+    def _selected_fields_text(self) -> str:
+        selected = self.field_choice.selected_values()
+    
+        if "all" in selected:
+            return "all fields"
+    
+        fields = [
+            field
+            for field in ["x", "y", "z", "intensity", "ring", "time"]
+            if field in selected
+        ]
+    
+        if "custom" in selected:
+            custom_text = self.custom_fields_edit.text().strip()
+    
+            if custom_text:
+                custom_fields = [
+                    field.strip()
+                    for field in custom_text.replace(" ", ",").split(",")
+                    if field.strip()
+                ]
+    
+                for field in custom_fields:
+                    if field not in fields:
+                        fields.append(field)
+            else:
+                fields.append("custom 입력 필요")
+    
+        return ", ".join(fields) if fields else "-"
+    
+    
+    def _end_index_text(self) -> str:
+        if not self.use_end_index_check.isChecked():
+            return "사용 안 함"
+    
+        return str(self.end_index_spin.value())
+    
+    
+    @staticmethod
+    def _bool_text(value: bool) -> str:
+        return "사용" if value else "미사용"
+    
+    
+    def _filename_mode_text(self) -> str:
+        if self.timestamp_filename_check.isChecked():
+            return "timestamp"
+    
+        return "index"
+    
     def _update_end_index_ui(self) -> None:
         self.end_index_spin.setEnabled(self.use_end_index_check.isChecked())
 
     def _selected_fields(self) -> list[str] | str:
-        preset = self.field_preset_combo.currentText()
+        selected = self.field_choice.selected_values()
 
-        if preset == "xyz":
-            return ["x", "y", "z"]
-
-        if preset == "xyz + intensity":
-            return ["x", "y", "z", "intensity"]
-
-        if preset == "xyz + intensity + ring":
-            return ["x", "y", "z", "intensity", "ring"]
-
-        if preset == "xyz + intensity + ring + time":
-            return ["x", "y", "z", "intensity", "ring", "time"]
-
-        if preset == "all fields":
+        if "all" in selected:
             return "all"
 
-        custom_text = self.custom_fields_edit.text().strip()
-
-        if not custom_text:
-            raise ValueError("Custom fields를 입력해야 합니다.")
-
         fields = [
-            field.strip()
-            for field in custom_text.replace(" ", ",").split(",")
-            if field.strip()
+            field
+            for field in ["x", "y", "z", "intensity", "ring", "time"]
+            if field in selected
         ]
 
+        if "custom" in selected:
+            custom_text = self.custom_fields_edit.text().strip()
+
+            if not custom_text:
+                raise ValueError("Custom fields를 선택한 경우 필드명을 입력해야 합니다.")
+
+            custom_fields = [
+                field.strip()
+                for field in custom_text.replace(" ", ",").split(",")
+                if field.strip()
+            ]
+
+            if not custom_fields:
+                raise ValueError("Custom fields를 입력해야 합니다.")
+
+            for field in custom_fields:
+                if field not in fields:
+                    fields.append(field)
+
         if not fields:
-            raise ValueError("Custom fields를 입력해야 합니다.")
+            raise ValueError("저장할 필드를 하나 이상 선택해야 합니다.")
 
         return fields
 
@@ -223,7 +344,7 @@ class LiDARPage(QWidget):
         input_path = self.bag_input_path_edit.text().strip()
         output_dir = self.output_dir_edit.text().strip()
         topic_text = self.topic_edit.text().strip()
-        pcd_format = self.pcd_format_combo.currentText()
+        pcd_format = self.pcd_format_choice.selected_value() or "ascii"
 
         if not input_path:
             self._log("[ERROR] Input rosbag 폴더를 선택해야 합니다.")
@@ -271,9 +392,7 @@ class LiDARPage(QWidget):
         self.run_button.setEnabled(False)
 
         try:
-            from data_parser.sensors.lidar.bag_to_pcd import (
-                extract_lidar_bag_to_pcd,
-            )
+            from data_parser.sensors.lidar.bag_to_pcd import extract_lidar_bag_to_pcd
 
             result = extract_lidar_bag_to_pcd(
                 bag_path=input_path,

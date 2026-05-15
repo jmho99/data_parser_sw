@@ -3,17 +3,20 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
     QLineEdit,
     QPushButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
+)
+
+from data_parser.gui.widgets import (
+    SensorPageShell,
+    SummaryPanel,
+    make_field_row,
+    make_path_input,
 )
 
 
@@ -31,87 +34,108 @@ class IMUPage(QWidget):
         self.bag_input_path_edit = QLineEdit()
         self.bag_output_dir_edit = QLineEdit()
         self.bag_topic_edit = QLineEdit("/imu/data")
-        self.bag_run_button = QPushButton("Run Bag to CSV")
+        self.bag_run_button = QPushButton("Bag → CSV 변환 시작")
 
         self.log_viewer = QTextEdit()
+        self.bag_csv_summary_panel = SummaryPanel()
 
+        self._setup_default_values()
         self._setup_ui()
+        self._connect_summary_signals()
+        self._update_summary()
 
-    def _setup_ui(self) -> None:
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(36, 32, 36, 32)
-        root_layout.setSpacing(18)
-
-        title_label = QLabel("IMU Converter")
-        title_label.setObjectName("PageTitle")
-
-        description_label = QLabel(
-            "IMU rosbag 데이터를 CSV 형식으로 변환합니다. "
-            "orientation, angular velocity, linear acceleration을 모두 저장합니다."
-        )
-        description_label.setObjectName("PageDescription")
-        description_label.setWordWrap(True)
-
-        root_layout.addWidget(title_label)
-        root_layout.addWidget(description_label)
-
-        form_widget = QWidget()
-        form_layout = QFormLayout(form_widget)
-        form_layout.setLabelAlignment(Qt.AlignLeft)
-        form_layout.setFormAlignment(Qt.AlignTop)
-        form_layout.setHorizontalSpacing(16)
-        form_layout.setVerticalSpacing(12)
-
-        bag_input_layout = QHBoxLayout()
-        bag_input_browse_button = QPushButton("Browse")
-        bag_input_layout.addWidget(self.bag_input_path_edit)
-        bag_input_layout.addWidget(bag_input_browse_button)
-
-        bag_output_layout = QHBoxLayout()
-        bag_output_browse_button = QPushButton("Browse")
-        bag_output_layout.addWidget(self.bag_output_dir_edit)
-        bag_output_layout.addWidget(bag_output_browse_button)
-
+    def _setup_default_values(self) -> None:
         self.bag_input_path_edit.setPlaceholderText("rosbag 폴더 경로")
         self.bag_output_dir_edit.setPlaceholderText("출력 폴더 경로")
         self.bag_topic_edit.setPlaceholderText("/imu/data 또는 /imu/raw")
 
-        form_layout.addRow("Input rosbag", bag_input_layout)
-        form_layout.addRow("Output folder", bag_output_layout)
-        form_layout.addRow("Topic", self.bag_topic_edit)
+    def _setup_ui(self) -> None:
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        root_layout.addWidget(form_widget)
-
-        self.bag_run_button.setFixedHeight(38)
-        root_layout.addWidget(self.bag_run_button)
-
-        log_label = QLabel("Log")
-        log_label.setObjectName("SectionTitle")
-        root_layout.addWidget(log_label)
-
-        self.log_viewer.setReadOnly(True)
-        self.log_viewer.setMinimumHeight(260)
-        root_layout.addWidget(self.log_viewer, stretch=1)
-
-        bag_input_browse_button.clicked.connect(self._browse_bag_input_path)
-        bag_output_browse_button.clicked.connect(self._browse_bag_output_dir)
-        self.bag_run_button.clicked.connect(self._run_bag_to_csv)
-
-    def _browse_bag_input_path(self) -> None:
-        selected_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select rosbag folder",
+        self.shell = SensorPageShell(
+            title_ko="IMU",
+            title_en="IMU",
+            description=(
+                "IMU rosbag 데이터를 CSV 형식으로 변환합니다. "
+                "orientation, angular velocity, linear acceleration을 모두 저장합니다."
+            ),
+            icon_name="imu",
+            conversion_count=1,
+            topics=["/imu/data", "/imu/raw"],
         )
 
+        self.shell.add_mode(
+            key="bag_csv",
+            label="Bag → CSV",
+            settings_widget=self._create_bag_csv_settings(),
+            summary_widget=self.bag_csv_summary_panel,
+            run_button=self.bag_run_button,
+        )
+
+        self.log_viewer.setReadOnly(True)
+        self.shell.set_log_widget(self.log_viewer)
+
+        root_layout.addWidget(self.shell)
+
+        self.bag_input_path_edit.textChanged.connect(self.shell.set_selected_source_path)
+        self.bag_run_button.clicked.connect(self._run_bag_to_csv)
+
+    def _create_bag_csv_settings(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 8, 16, 16)
+        layout.setSpacing(12)
+
+        browse_input = QPushButton("Browse")
+        browse_output = QPushButton("Browse")
+
+        layout.addWidget(make_field_row(
+            "입력 rosbag",
+            "Input rosbag",
+            make_path_input(self.bag_input_path_edit, browse_input),
+        ))
+        layout.addWidget(make_field_row(
+            "출력 폴더",
+            "Output folder",
+            make_path_input(self.bag_output_dir_edit, browse_output),
+        ))
+        layout.addWidget(make_field_row("토픽", "Topic", self.bag_topic_edit))
+        layout.addStretch(1)
+
+        browse_input.clicked.connect(self._browse_bag_input_path)
+        browse_output.clicked.connect(self._browse_bag_output_dir)
+
+        return widget
+
+    def _connect_summary_signals(self) -> None:
+        for editor in (
+            self.bag_input_path_edit,
+            self.bag_output_dir_edit,
+            self.bag_topic_edit,
+        ):
+            editor.textChanged.connect(lambda *_: self._update_summary())
+    
+    
+    def _update_summary(self) -> None:
+        self.bag_csv_summary_panel.update_summary(
+            sensor="IMU",
+            mode="bag → csv",
+            input_path=self.bag_input_path_edit.text(),
+            output_path=self.bag_output_dir_edit.text(),
+            topic=self.bag_topic_edit.text(),
+            fmt="csv",
+            extra="저장 항목: orientation, angular_velocity, linear_acceleration",
+        )
+    
+    def _browse_bag_input_path(self) -> None:
+        selected_dir = QFileDialog.getExistingDirectory(self, "Select rosbag folder")
         if selected_dir:
             self.bag_input_path_edit.setText(selected_dir)
 
     def _browse_bag_output_dir(self) -> None:
-        selected_dir = QFileDialog.getExistingDirectory(
-            self,
-            "Select output folder",
-        )
-
+        selected_dir = QFileDialog.getExistingDirectory(self, "Select output folder")
         if selected_dir:
             self.bag_output_dir_edit.setText(selected_dir)
 
