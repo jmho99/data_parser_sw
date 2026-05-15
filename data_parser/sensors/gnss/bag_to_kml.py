@@ -66,6 +66,8 @@ def _extract_bag_to_csv(
     bag_path: str | Path,
     output_dir: str | Path,
     topics: list[str] | None,
+    backend: str = "auto",
+    storage_id: str = "auto",
 ) -> list[Path]:
     from data_parser.sensors.gnss.bag_to_csv import extract_rosbag_to_csv
 
@@ -76,6 +78,8 @@ def _extract_bag_to_csv(
         bag_path=str(bag_path),
         output_dir=str(output_dir),
         topics=topics,
+        backend=backend,
+        storage_id=storage_id,
     )
 
     return _collect_csv_paths(result, output_dir)
@@ -91,6 +95,8 @@ def convert_gnss_bag_to_kml(
     max_cov_xy: float | None = None,
     point_step: int = 50,
     keep_csv: bool = True,
+    backend: str = "auto",
+    storage_id: str = "auto",
 ) -> dict[str, Path]:
     """
     ROS2 bag -> GNSS CSV -> KML 변환.
@@ -135,6 +141,8 @@ def convert_gnss_bag_to_kml(
             bag_path=bag_path,
             output_dir=csv_output_dir,
             topics=selected_topics,
+            backend=backend,
+            storage_id=storage_id,
         )
 
         fix_csv_paths = [
@@ -166,6 +174,31 @@ def convert_gnss_bag_to_kml(
             cleanup_context.cleanup()
 
 
+def bag_to_kml(
+    bag_path: str | Path,
+    output_kml: str | Path,
+    topics: list[str] | tuple[str, ...] | None = None,
+    min_status: int = 0,
+    max_cov_xy: float | None = None,
+    point_step: int = 50,
+    backend: str = "auto",
+    storage_id: str = "auto",
+) -> dict[str, Path]:
+    output_kml = Path(output_kml)
+    return convert_gnss_bag_to_kml(
+        bag_path=bag_path,
+        output_path=output_kml.parent,
+        output_name=output_kml.name,
+        topics=topics,
+        min_status=min_status,
+        max_cov_xy=max_cov_xy,
+        point_step=point_step,
+        keep_csv=True,
+        backend=backend,
+        storage_id=storage_id,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Convert ROS2 GNSS bag to KML.")
     parser.add_argument("bag_path")
@@ -176,6 +209,17 @@ def main() -> None:
     parser.add_argument("--max-cov-xy", type=float, default=None)
     parser.add_argument("--point-step", type=int, default=50)
     parser.add_argument("--remove-csv", action="store_true")
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "rosbags", "ros2"],
+        help="bag reader backend. Windows 배포는 rosbags 권장.",
+    )
+    parser.add_argument(
+        "--storage-id",
+        default="auto",
+        help="rosbag2 storage id: auto, sqlite3, mcap. ros2 backend에서 주로 사용.",
+    )
     args = parser.parse_args()
 
     result = convert_gnss_bag_to_kml(
@@ -187,6 +231,8 @@ def main() -> None:
         max_cov_xy=args.max_cov_xy,
         point_step=args.point_step,
         keep_csv=not args.remove_csv,
+        backend=args.backend,
+        storage_id=args.storage_id,
     )
 
     print(f"[DONE] CSV: {result['csv_path']}")

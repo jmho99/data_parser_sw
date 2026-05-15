@@ -8,6 +8,10 @@ input:
   path: null
 
 rosbag:
+  # auto, rosbags, ros2
+  # Windows 배포는 rosbags 권장
+  backend: auto
+
   # auto, sqlite3, mcap
   storage_id: auto
   auto_find_topic: true
@@ -38,26 +42,3 @@ output:
 time:
   # ros_time, file_time, system_time
   source: ros_time
-
-  # sec_nanosec, iso8601, unix_float
-  format: sec_nanosec
-
-logging:
-  level: INFO
-
-sensors:
-  camera:
-    enabled: true
-    config_file: configs/camera.yaml
-
-  lidar:
-    enabled: true
-    config_file: configs/lidar.yaml
-
-  gnss:
-    enabled: true
-    config_file: configs/gnss.yaml
-
-  imu:
-    enabled: true
-    config_file: configs/imu.yaml

@@ -4,8 +4,7 @@ Supported message types:
 - sensor_msgs/msg/NavSatFix -> fix CSV schema
 - nmea_msgs/msg/Sentence   -> NMEA sentence CSV schema
 
-ROS2 packages are imported lazily inside extract_rosbag_to_csv(), so this module
-can still be imported on a non-ROS machine for help/tests that do not read bags.
+This version can read bags without ROS2 by using the pure-python rosbags backend.
 """
 
 from __future__ import annotations
@@ -15,8 +14,6 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-import yaml
-
 from data_parser.sensors.gnss.gnss_config import (
     FIX_CSV_FIELDNAMES,
     NAVSATFIX_TYPE,
@@ -24,39 +21,7 @@ from data_parser.sensors.gnss.gnss_config import (
     NMEA_SENTENCE_TYPE,
     SUPPORTED_GNSS_ROSBAG_TYPES,
 )
-
-
-def detect_storage_id(bag_path: str | Path) -> str:
-    """Detect ROS2 bag storage type from metadata.yaml or bag file extension."""
-    bag_path = Path(bag_path)
-    metadata_path = bag_path / "metadata.yaml"
-
-    if metadata_path.exists():
-        with metadata_path.open("r") as f:
-            metadata = yaml.safe_load(f) or {}
-
-        storage_id = (
-            metadata.get("rosbag2_bagfile_information", {})
-            .get("storage_identifier")
-        )
-        if storage_id:
-            return str(storage_id)
-
-    if not bag_path.exists():
-        raise FileNotFoundError(f"ROS2 bag path does not exist: {bag_path}")
-
-    names = [p.name for p in bag_path.iterdir()]
-
-    if any(name.endswith(".mcap") for name in names):
-        return "mcap"
-
-    if any(name.endswith(".db3") for name in names):
-        return "sqlite3"
-
-    raise RuntimeError(
-        f"Cannot detect rosbag storage type in: {bag_path}\n"
-        "Expected .mcap or .db3 file, or metadata.yaml with storage_identifier."
-    )
+from data_parser.sources.rosbag_reader import detect_storage_id, open_rosbag_reader
 
 
 def sanitize_topic_name(topic_name: str) -> str:
@@ -128,83 +93,76 @@ def extract_rosbag_to_csv(
     bag_path: str | Path,
     output_dir: str | Path = "csv_output",
     topics: Iterable[str] | None = None,
+    backend: str = "auto",
+    storage_id: str = "auto",
 ) -> list[Path]:
     """Extract supported GNSS topics from a ROS2 bag to CSV files."""
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
-    from rosidl_runtime_py.utilities import get_message
-
     bag_path = Path(bag_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    storage_id = detect_storage_id(bag_path)
-    print(f"[INFO] Detected storage_id: {storage_id}")
+    if storage_id == "auto":
+        try:
+            detected_storage_id = detect_storage_id(bag_path)
+        except Exception:
+            detected_storage_id = "auto"
+    else:
+        detected_storage_id = storage_id
 
-    storage_options = rosbag2_py.StorageOptions(
-        uri=str(bag_path),
-        storage_id=storage_id,
-    )
-    converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format="cdr",
-        output_serialization_format="cdr",
-    )
+    print(f"[INFO] backend: {backend}")
+    print(f"[INFO] Detected storage_id: {detected_storage_id}")
 
-    reader = rosbag2_py.SequentialReader()
-    reader.open(storage_options, converter_options)
-
-    topic_types = reader.get_all_topics_and_types()
-    type_map = {t.name: t.type for t in topic_types}
-    selected_topics = set(topics) if topics else set(type_map.keys())
-
-    print("[INFO] Topics in bag:")
-    for topic, msg_type in type_map.items():
-        mark = "SUPPORTED" if msg_type in SUPPORTED_GNSS_ROSBAG_TYPES else "SKIP"
-        print(f"  {topic:40s} {msg_type:35s} {mark}")
+    selected_topic_set = set(topics) if topics else None
 
     writers: dict[str, csv.DictWriter] = {}
     files = {}
-    msg_classes = {}
     output_paths: list[Path] = []
 
-    try:
-        while reader.has_next():
-            topic, data, t_nsec = reader.read_next()
+    with open_rosbag_reader(
+        bag_path=bag_path,
+        backend=backend,
+        storage_id=detected_storage_id,
+    ) as reader:
+        type_map = reader.topic_type_map
 
-            if topic not in selected_topics:
-                continue
+        print("[INFO] Topics in bag:")
+        for topic, msg_type in type_map.items():
+            mark = "SUPPORTED" if msg_type in SUPPORTED_GNSS_ROSBAG_TYPES else "SKIP"
+            print(f"  {topic:40s} {msg_type:35s} {mark}")
 
-            msg_type = type_map.get(topic)
-            if msg_type not in SUPPORTED_GNSS_ROSBAG_TYPES:
-                continue
+        target_topics = selected_topic_set if selected_topic_set else set(type_map.keys())
 
-            if topic not in msg_classes:
-                msg_classes[topic] = get_message(msg_type)
+        try:
+            for record in reader.messages(topics=target_topics):
+                topic = record.topic
+                msg_type = record.msg_type
 
-            msg = deserialize_message(data, msg_classes[topic])
-            row = message_to_row(msg, msg_type, t_nsec)
-            if row is None:
-                continue
-
-            if topic not in writers:
-                fieldnames = get_fieldnames(msg_type)
-                if fieldnames is None:
+                if msg_type not in SUPPORTED_GNSS_ROSBAG_TYPES:
                     continue
 
-                output_path = output_dir / f"{sanitize_topic_name(topic)}.csv"
-                f = output_path.open("w", newline="")
-                files[topic] = f
+                row = message_to_row(record.msg, msg_type, record.timestamp)
+                if row is None:
+                    continue
 
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writers[topic] = writer
-                output_paths.append(output_path)
-                print(f"[INFO] Writing {topic} -> {output_path}")
+                if topic not in writers:
+                    fieldnames = get_fieldnames(msg_type)
+                    if fieldnames is None:
+                        continue
 
-            writers[topic].writerow(row)
-    finally:
-        for f in files.values():
-            f.close()
+                    output_path = output_dir / f"{sanitize_topic_name(topic)}.csv"
+                    f = output_path.open("w", newline="", encoding="utf-8")
+                    files[topic] = f
+
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writers[topic] = writer
+                    output_paths.append(output_path)
+                    print(f"[INFO] Writing {topic} -> {output_path}")
+
+                writers[topic].writerow(row)
+        finally:
+            for f in files.values():
+                f.close()
 
     print("[DONE] GNSS CSV extraction complete.")
     return output_paths
@@ -222,12 +180,25 @@ def main() -> None:
         default=None,
         help="Optional topic list. Example: --topics /fix /gnss/fix /nmea",
     )
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "rosbags", "ros2"],
+        help="bag reader backend. Windows 배포는 rosbags 권장.",
+    )
+    parser.add_argument(
+        "--storage-id",
+        default="auto",
+        help="rosbag2 storage id: auto, sqlite3, mcap. ros2 backend에서 주로 사용.",
+    )
     args = parser.parse_args()
 
     extract_rosbag_to_csv(
         bag_path=args.bag_path,
         output_dir=args.output_dir,
         topics=args.topics,
+        backend=args.backend,
+        storage_id=args.storage_id,
     )
 
 

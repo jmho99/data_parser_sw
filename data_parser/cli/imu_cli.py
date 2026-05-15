@@ -27,6 +27,17 @@ def add_imu_subparser(sensor_subparsers) -> None:
         action="store_true",
         help="Also save IMU covariance arrays.",
     )
+    bag_csv.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "rosbags", "ros2"],
+        help="bag reader backend. Windows 배포는 rosbags 권장.",
+    )
+    bag_csv.add_argument(
+        "--storage-id",
+        default="auto",
+        help="rosbag2 storage id: auto, sqlite3, mcap. ros2 backend에서 주로 사용.",
+    )
     bag_csv.set_defaults(func=_run_bag_to_csv)
 
 
@@ -38,4 +49,6 @@ def _run_bag_to_csv(args: argparse.Namespace) -> None:
         output_dir=args.output_dir,
         topics=args.topics,
         include_covariance=args.include_covariance,
+        backend=args.backend,
+        storage_id=args.storage_id,
     )

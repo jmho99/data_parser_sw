@@ -6,19 +6,16 @@ from typing import Callable
 
 import cv2
 import numpy as np
-import rosbag2_py
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
 
 from data_parser.sensors.camera.bag_to_img import (
     COMPRESSED_IMAGE_MSG_TYPE,
     IMAGE_MSG_TYPE,
     _compressed_image_msg_to_cv_image,
-    _detect_storage_id,
     _image_msg_to_cv_image,
     _normalize_topics,
     _safe_topic_dir_name,
 )
+from data_parser.sources.rosbag_reader import open_rosbag_reader
 
 
 LogCallback = Callable[[str], None]
@@ -41,16 +38,11 @@ def bag_to_video(
     codec: str | None = None,
     every_n: int = 1,
     max_frames: int | None = None,
+    backend: str = "auto",
+    storage_id: str = "auto",
     log_callback: LogCallback | None = None,
 ) -> BagToVideoResult:
-    """
-    ROS2 bag 안의 Image / CompressedImage 토픽을 비디오 파일로 저장한다.
-
-    여러 토픽을 입력하면 토픽별로 별도 비디오 파일을 생성한다.
-    예:
-      /camera/front/image_raw -> camera_front_image_raw.mp4
-      /camera/rear/image_raw  -> camera_rear_image_raw.mp4
-    """
+    """ROS2 bag 안의 Image / CompressedImage 토픽을 비디오 파일로 저장한다."""
 
     bag_path = Path(bag_path).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
@@ -79,155 +71,136 @@ def bag_to_video(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    storage_id = _detect_storage_id(bag_path)
-
     _log(log_callback, "[INFO] Camera bag to video 변환 시작")
     _log(log_callback, f"[INFO] bag path: {bag_path}")
     _log(log_callback, f"[INFO] output dir: {output_dir}")
-    _log(log_callback, f"[INFO] storage id: {storage_id}")
+    _log(log_callback, f"[INFO] backend: {backend}")
     _log(log_callback, f"[INFO] format: {output_format}")
     _log(log_callback, f"[INFO] fps: {fps}")
     _log(log_callback, f"[INFO] codec: {codec}")
 
-    reader = rosbag2_py.SequentialReader()
-
-    storage_options = rosbag2_py.StorageOptions(
-        uri=str(bag_path),
+    with open_rosbag_reader(
+        bag_path=bag_path,
+        backend=backend,
         storage_id=storage_id,
-    )
-    converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format="cdr",
-        output_serialization_format="cdr",
-    )
+    ) as reader:
+        topic_type_map = reader.topic_type_map
 
-    reader.open(storage_options, converter_options)
-
-    topic_type_map = {
-        topic_metadata.name: topic_metadata.type
-        for topic_metadata in reader.get_all_topics_and_types()
-    }
-
-    image_topics = [
-        topic_name
-        for topic_name, topic_type in topic_type_map.items()
-        if topic_type in {IMAGE_MSG_TYPE, COMPRESSED_IMAGE_MSG_TYPE}
-    ]
-
-    if not image_topics:
-        raise RuntimeError("bag 안에서 Image 또는 CompressedImage 토픽을 찾지 못했습니다.")
-
-    selected_topics = _normalize_topics(topics)
-
-    if selected_topics:
-        missing_topics = sorted(set(selected_topics) - set(topic_type_map.keys()))
-        if missing_topics:
-            raise RuntimeError(
-                "bag 안에 존재하지 않는 토픽이 있습니다: "
-                + ", ".join(missing_topics)
-            )
-
-        unsupported_topics = [
+        image_topics = [
             topic_name
-            for topic_name in selected_topics
-            if topic_type_map[topic_name] not in {IMAGE_MSG_TYPE, COMPRESSED_IMAGE_MSG_TYPE}
+            for topic_name, topic_type in topic_type_map.items()
+            if topic_type in {IMAGE_MSG_TYPE, COMPRESSED_IMAGE_MSG_TYPE}
         ]
-        if unsupported_topics:
-            raise RuntimeError(
-                "Image 계열 토픽이 아닌 항목이 포함되어 있습니다: "
-                + ", ".join(unsupported_topics)
-            )
 
-        target_topics = selected_topics
-    else:
-        target_topics = image_topics
+        if not image_topics:
+            raise RuntimeError("bag 안에서 Image 또는 CompressedImage 토픽을 찾지 못했습니다.")
 
-    _log(log_callback, "[INFO] video target topics:")
-    for topic_name in target_topics:
-        _log(log_callback, f"  - {topic_name} ({topic_type_map[topic_name]})")
+        selected_topics = _normalize_topics(topics)
 
-    target_topic_set = set(target_topics)
-    seen_counts: dict[str, int] = {topic_name: 0 for topic_name in target_topics}
-    saved_counts: dict[str, int] = {topic_name: 0 for topic_name in target_topics}
-
-    writers: dict[str, cv2.VideoWriter] = {}
-    video_paths: dict[str, Path] = {}
-    video_sizes: dict[str, tuple[int, int]] = {}
-
-    total_saved = 0
-
-    try:
-        while reader.has_next():
-            topic_name, serialized_data, _timestamp_ns = reader.read_next()
-
-            if topic_name not in target_topic_set:
-                continue
-
-            seen_counts[topic_name] += 1
-
-            if (seen_counts[topic_name] - 1) % every_n != 0:
-                continue
-
-            msg_type = get_message(topic_type_map[topic_name])
-            msg = deserialize_message(serialized_data, msg_type)
-
-            if topic_type_map[topic_name] == IMAGE_MSG_TYPE:
-                image = _image_msg_to_cv_image(msg)
-            elif topic_type_map[topic_name] == COMPRESSED_IMAGE_MSG_TYPE:
-                image = _compressed_image_msg_to_cv_image(msg)
-            else:
-                continue
-
-            frame = _prepare_frame_for_video(image)
-            height, width = frame.shape[:2]
-            current_size = (width, height)
-
-            if topic_name not in writers:
-                safe_topic_name = _safe_topic_dir_name(topic_name)
-                video_path = output_dir / f"{safe_topic_name}.{output_format}"
-
-                fourcc = cv2.VideoWriter_fourcc(*codec)
-                writer = cv2.VideoWriter(
-                    str(video_path),
-                    fourcc,
-                    float(fps),
-                    current_size,
+        if selected_topics:
+            missing_topics = sorted(set(selected_topics) - set(topic_type_map.keys()))
+            if missing_topics:
+                raise RuntimeError(
+                    "bag 안에 존재하지 않는 토픽이 있습니다: "
+                    + ", ".join(missing_topics)
                 )
 
-                if not writer.isOpened():
-                    raise RuntimeError(
-                        "VideoWriter를 열지 못했습니다. "
-                        f"path={video_path}, format={output_format}, codec={codec}. "
-                        "mp4가 실패하면 avi + MJPG 조합으로 다시 시도해보세요."
+            unsupported_topics = [
+                topic_name
+                for topic_name in selected_topics
+                if topic_type_map[topic_name] not in {IMAGE_MSG_TYPE, COMPRESSED_IMAGE_MSG_TYPE}
+            ]
+            if unsupported_topics:
+                raise RuntimeError(
+                    "Image 계열 토픽이 아닌 항목이 포함되어 있습니다: "
+                    + ", ".join(unsupported_topics)
+                )
+
+            target_topics = selected_topics
+        else:
+            target_topics = image_topics
+
+        _log(log_callback, "[INFO] video target topics:")
+        for topic_name in target_topics:
+            _log(log_callback, f"  - {topic_name} ({topic_type_map[topic_name]})")
+
+        target_topic_set = set(target_topics)
+        seen_counts: dict[str, int] = {topic_name: 0 for topic_name in target_topics}
+        saved_counts: dict[str, int] = {topic_name: 0 for topic_name in target_topics}
+
+        writers: dict[str, cv2.VideoWriter] = {}
+        video_paths: dict[str, Path] = {}
+        video_sizes: dict[str, tuple[int, int]] = {}
+
+        total_saved = 0
+
+        try:
+            for record in reader.messages(topics=target_topic_set):
+                topic_name = record.topic
+
+                seen_counts[topic_name] += 1
+
+                if (seen_counts[topic_name] - 1) % every_n != 0:
+                    continue
+
+                if record.msg_type == IMAGE_MSG_TYPE:
+                    image = _image_msg_to_cv_image(record.msg)
+                elif record.msg_type == COMPRESSED_IMAGE_MSG_TYPE:
+                    image = _compressed_image_msg_to_cv_image(record.msg)
+                else:
+                    continue
+
+                frame = _prepare_frame_for_video(image)
+                height, width = frame.shape[:2]
+                current_size = (width, height)
+
+                if topic_name not in writers:
+                    safe_topic_name = _safe_topic_dir_name(topic_name)
+                    video_path = output_dir / f"{safe_topic_name}.{output_format}"
+
+                    fourcc = cv2.VideoWriter_fourcc(*codec)
+                    writer = cv2.VideoWriter(
+                        str(video_path),
+                        fourcc,
+                        float(fps),
+                        current_size,
                     )
 
-                writers[topic_name] = writer
-                video_paths[topic_name] = video_path
-                video_sizes[topic_name] = current_size
+                    if not writer.isOpened():
+                        raise RuntimeError(
+                            "VideoWriter를 열지 못했습니다. "
+                            f"path={video_path}, format={output_format}, codec={codec}. "
+                            "mp4가 실패하면 avi + MJPG 조합으로 다시 시도해보세요."
+                        )
 
-                _log(log_callback, f"[INFO] open video writer: {video_path}")
-                _log(log_callback, f"[INFO] size: {width}x{height}")
+                    writers[topic_name] = writer
+                    video_paths[topic_name] = video_path
+                    video_sizes[topic_name] = current_size
 
-            if video_sizes[topic_name] != current_size:
-                raise RuntimeError(
-                    f"프레임 크기가 중간에 변경되었습니다: {topic_name} "
-                    f"{video_sizes[topic_name]} -> {current_size}"
-                )
+                    _log(log_callback, f"[INFO] open video writer: {video_path}")
+                    _log(log_callback, f"[INFO] size: {width}x{height}")
 
-            writers[topic_name].write(frame)
+                if video_sizes[topic_name] != current_size:
+                    raise RuntimeError(
+                        f"프레임 크기가 중간에 변경되었습니다: {topic_name} "
+                        f"{video_sizes[topic_name]} -> {current_size}"
+                    )
 
-            saved_counts[topic_name] += 1
-            total_saved += 1
+                writers[topic_name].write(frame)
 
-            if total_saved % 100 == 0:
-                _log(log_callback, f"[INFO] saved {total_saved} video frames...")
+                saved_counts[topic_name] += 1
+                total_saved += 1
 
-            if max_frames is not None and total_saved >= max_frames:
-                _log(log_callback, f"[INFO] max_frames 도달: {max_frames}")
-                break
+                if total_saved % 100 == 0:
+                    _log(log_callback, f"[INFO] saved {total_saved} video frames...")
 
-    finally:
-        for writer in writers.values():
-            writer.release()
+                if max_frames is not None and total_saved >= max_frames:
+                    _log(log_callback, f"[INFO] max_frames 도달: {max_frames}")
+                    break
+
+        finally:
+            for writer in writers.values():
+                writer.release()
 
     _log(log_callback, "[INFO] 변환 완료")
     _log(log_callback, f"[INFO] total video frames: {total_saved}")
@@ -269,9 +242,7 @@ def _default_codec(output_format: str) -> str:
 
 
 def _prepare_frame_for_video(image: np.ndarray) -> np.ndarray:
-    """
-    OpenCV VideoWriter에 넣을 수 있도록 frame을 uint8 BGR 3채널로 변환한다.
-    """
+    """OpenCV VideoWriter에 넣을 수 있도록 frame을 uint8 BGR 3채널로 변환한다."""
 
     frame = image
 

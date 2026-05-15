@@ -4,25 +4,33 @@ import struct
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence, Union
 
-from sensor_msgs.msg import PointField
-
 from data_parser.utils.path_utils import ensure_parent_dir, to_path
 
 
 PathLike = Union[str, Path]
 
+# sensor_msgs/msg/PointField constants.
+# Keep these local so this exporter does not require ROS2 or sensor_msgs.
+POINTFIELD_INT8 = 1
+POINTFIELD_UINT8 = 2
+POINTFIELD_INT16 = 3
+POINTFIELD_UINT16 = 4
+POINTFIELD_INT32 = 5
+POINTFIELD_UINT32 = 6
+POINTFIELD_FLOAT32 = 7
+POINTFIELD_FLOAT64 = 8
+
 DEFAULT_FIELD_ORDER = ["x", "y", "z", "intensity", "ring", "t", "time", "timestamp", "rgb"]
 
-
 POINTFIELD_TO_PCD = {
-    PointField.INT8: ("1", "I", "b"),
-    PointField.UINT8: ("1", "U", "B"),
-    PointField.INT16: ("2", "I", "h"),
-    PointField.UINT16: ("2", "U", "H"),
-    PointField.INT32: ("4", "I", "i"),
-    PointField.UINT32: ("4", "U", "I"),
-    PointField.FLOAT32: ("4", "F", "f"),
-    PointField.FLOAT64: ("8", "F", "d"),
+    POINTFIELD_INT8: ("1", "I", "b"),
+    POINTFIELD_UINT8: ("1", "U", "B"),
+    POINTFIELD_INT16: ("2", "I", "h"),
+    POINTFIELD_UINT16: ("2", "U", "H"),
+    POINTFIELD_INT32: ("4", "I", "i"),
+    POINTFIELD_UINT32: ("4", "U", "I"),
+    POINTFIELD_FLOAT32: ("4", "F", "f"),
+    POINTFIELD_FLOAT64: ("8", "F", "d"),
 }
 
 
@@ -90,7 +98,7 @@ def _default_field_specs(fields: Sequence[str]) -> list[dict[str, Any]]:
     return [
         {
             "name": field,
-            "datatype": PointField.FLOAT32,
+            "datatype": POINTFIELD_FLOAT32,
             "count": 1,
         }
         for field in fields
@@ -111,12 +119,13 @@ def _normalize_field_specs(
         if field in spec_map:
             spec = dict(spec_map[field])
             spec.setdefault("count", 1)
+            spec.setdefault("datatype", POINTFIELD_FLOAT32)
             normalized.append(spec)
         else:
             normalized.append(
                 {
                     "name": field,
-                    "datatype": PointField.FLOAT32,
+                    "datatype": POINTFIELD_FLOAT32,
                     "count": 1,
                 }
             )
@@ -133,10 +142,10 @@ def _pcd_layout_from_specs(
     counts: list[str] = []
 
     for spec in specs:
-        datatype = spec.get("datatype", PointField.FLOAT32)
+        datatype = int(spec.get("datatype", POINTFIELD_FLOAT32))
         size, pcd_type, _ = POINTFIELD_TO_PCD.get(
             datatype,
-            POINTFIELD_TO_PCD[PointField.FLOAT32],
+            POINTFIELD_TO_PCD[POINTFIELD_FLOAT32],
         )
 
         field_names.append(str(spec["name"]))
@@ -187,11 +196,11 @@ def _struct_format_from_specs(specs: Sequence[dict[str, Any]]) -> str:
     format_chars: list[str] = []
 
     for spec in specs:
-        datatype = spec.get("datatype", PointField.FLOAT32)
+        datatype = int(spec.get("datatype", POINTFIELD_FLOAT32))
         count = int(spec.get("count", 1))
         _, _, struct_char = POINTFIELD_TO_PCD.get(
             datatype,
-            POINTFIELD_TO_PCD[PointField.FLOAT32],
+            POINTFIELD_TO_PCD[POINTFIELD_FLOAT32],
         )
 
         format_chars.extend([struct_char] * count)
@@ -253,13 +262,6 @@ def _write_binary_compressed(
     rows: Sequence[Sequence[Any]],
     specs: Sequence[dict[str, Any]],
 ) -> None:
-    """
-    binary_compressed 연결용 placeholder.
-
-    현재는 CLI/GUI/exporter 선택 구조만 연결해둔다.
-    실제 압축 저장이 필요하면 PCD binary_compressed 규격에 맞춰
-    compressed_size, uncompressed_size, compressed data block을 작성하면 된다.
-    """
     raise NotImplementedError(
         "binary_compressed PCD export is connected but not implemented yet. "
         "Use ascii or binary."
@@ -274,15 +276,9 @@ def export_pcd(
     pcd_format: str = "ascii",
 ) -> Path:
     """
-    PointCloud 데이터를 PCD로 저장.
+    Save point rows to a PCD file without requiring ROS2 packages.
 
-    지원 format:
-        - ascii
-        - binary
-        - binary_compressed: 함수 연결만 되어 있고 내부 구현은 placeholder
-
-    ROS PointCloud2 메시지 파싱은 여기서 하지 않고,
-    sensors/lidar/bag_to_pcd.py에서 points 형태로 변환한 뒤 넘긴다.
+    PointCloud2 parsing is handled in sensors/lidar/bag_to_pcd.py.
     """
     path = to_path(output_path)
     ensure_parent_dir(path)

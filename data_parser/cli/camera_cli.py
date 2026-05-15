@@ -21,6 +21,20 @@ def add_camera_subparser(subparsers) -> None:
     _add_video_to_img_parser(camera_subparsers)
 
 
+def _add_rosbag_backend_args(parser) -> None:
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "rosbags", "ros2"],
+        help="bag reader backend. Windows 배포는 rosbags 권장.",
+    )
+    parser.add_argument(
+        "--storage-id",
+        default="auto",
+        help="rosbag2 storage id: auto, sqlite3, mcap. ros2 backend에서 주로 사용.",
+    )
+
+
 def _add_bag_to_img_parser(camera_subparsers) -> None:
     parser = camera_subparsers.add_parser(
         "bag-to-img",
@@ -71,6 +85,7 @@ def _add_bag_to_img_parser(camera_subparsers) -> None:
         help="전체 저장 최대 프레임 수. 미입력 시 제한 없음",
     )
 
+    _add_rosbag_backend_args(parser)
     parser.set_defaults(func=handle_bag_to_img)
 
 
@@ -136,6 +151,7 @@ def _add_bag_to_video_parser(camera_subparsers) -> None:
         help="전체 저장 최대 프레임 수. 미입력 시 제한 없음",
     )
 
+    _add_rosbag_backend_args(parser)
     parser.set_defaults(func=handle_bag_to_video)
 
 
@@ -203,6 +219,8 @@ def handle_bag_to_img(args) -> None:
         output_format=args.format,
         every_n=args.every_n,
         max_frames=args.max_frames,
+        backend=args.backend,
+        storage_id=args.storage_id,
     )
 
     print("[DONE] bag to img 변환 완료")
@@ -223,6 +241,8 @@ def handle_bag_to_video(args) -> None:
         codec=args.codec,
         every_n=args.every_n,
         max_frames=args.max_frames,
+        backend=args.backend,
+        storage_id=args.storage_id,
     )
 
     print("[DONE] bag to video 변환 완료")

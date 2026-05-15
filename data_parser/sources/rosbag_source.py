@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from typing import Iterator, Any
+from typing import Any, Iterator
 
 from data_parser.sources.base_source import BaseSource
+from data_parser.sources.rosbag_reader import open_rosbag_reader
 
 
 class RosbagSource(BaseSource):
     def __init__(self, config: dict):
         super().__init__(config)
-        self.reader = None
+        self._context = None
+        self._reader = None
 
     def open(self) -> None:
         input_config = self.config.get("input", {})
@@ -16,26 +18,35 @@ class RosbagSource(BaseSource):
 
         bag_path = input_config.get("path")
         storage_id = rosbag_config.get("storage_id", "auto")
+        backend = rosbag_config.get("backend", "auto")
 
         if bag_path is None:
             raise ValueError("input.path is required for rosbag source")
 
-        # 실제 rosbag2_py reader 연결은 다음 단계에서 구현
-        self.bag_path = bag_path
-        self.storage_id = storage_id
+        self._context = open_rosbag_reader(
+            bag_path=bag_path,
+            backend=backend,
+            storage_id=storage_id,
+        )
+        self._reader = self._context.__enter__()
 
     def close(self) -> None:
-        self.reader = None
+        if self._context is not None:
+            self._context.__exit__(None, None, None)
+        self._context = None
+        self._reader = None
 
     def read(self) -> Iterator[Any]:
         """
-        이후 rosbag2_py를 사용해서 아래 형태로 반환 예정.
-
-        yield {
-            "topic": topic,
-            "msg": msg,
-            "timestamp": timestamp,
-            "msg_type": msg_type,
-        }
+        Yield records in a dict shape compatible with the older planned source API.
         """
-        raise NotImplementedError("RosbagSource.read() is not implemented yet")
+        if self._reader is None:
+            raise RuntimeError("RosbagSource is not opened")
+
+        for record in self._reader.messages():
+            yield {
+                "topic": record.topic,
+                "msg": record.msg,
+                "timestamp": record.timestamp,
+                "msg_type": record.msg_type,
+            }

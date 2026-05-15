@@ -2,45 +2,35 @@ from __future__ import annotations
 
 import math
 import re
+import struct
 from pathlib import Path
-from typing import Any, Iterable, Sequence
-
-import rosbag2_py
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
-from sensor_msgs.msg import PointCloud2
-from sensor_msgs_py import point_cloud2
+from typing import Any, Sequence
 
 from data_parser.exporters.pcd_exporter import export_pcd
+from data_parser.sources.rosbag_reader import open_rosbag_reader
 
 
-def _detect_storage_id(bag_path: Path) -> str:
-    if any(bag_path.glob("*.mcap")):
-        return "mcap"
+POINTCLOUD2_MSG_TYPE = "sensor_msgs/msg/PointCloud2"
 
-    if any(bag_path.glob("*.db3")):
-        return "sqlite3"
+POINTFIELD_INT8 = 1
+POINTFIELD_UINT8 = 2
+POINTFIELD_INT16 = 3
+POINTFIELD_UINT16 = 4
+POINTFIELD_INT32 = 5
+POINTFIELD_UINT32 = 6
+POINTFIELD_FLOAT32 = 7
+POINTFIELD_FLOAT64 = 8
 
-    return "sqlite3"
-
-
-def _open_reader(bag_path: Path, storage_id: str) -> rosbag2_py.SequentialReader:
-    if storage_id == "auto":
-        storage_id = _detect_storage_id(bag_path)
-
-    reader = rosbag2_py.SequentialReader()
-
-    storage_options = rosbag2_py.StorageOptions(
-        uri=str(bag_path),
-        storage_id=storage_id,
-    )
-    converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format="cdr",
-        output_serialization_format="cdr",
-    )
-
-    reader.open(storage_options, converter_options)
-    return reader
+POINTFIELD_STRUCT = {
+    POINTFIELD_INT8: ("b", 1),
+    POINTFIELD_UINT8: ("B", 1),
+    POINTFIELD_INT16: ("h", 2),
+    POINTFIELD_UINT16: ("H", 2),
+    POINTFIELD_INT32: ("i", 4),
+    POINTFIELD_UINT32: ("I", 4),
+    POINTFIELD_FLOAT32: ("f", 4),
+    POINTFIELD_FLOAT64: ("d", 8),
+}
 
 
 def _sanitize_topic_name(topic: str) -> str:
@@ -49,8 +39,24 @@ def _sanitize_topic_name(topic: str) -> str:
     return name or "pointcloud"
 
 
-def _message_field_names(msg: PointCloud2) -> list[str]:
-    return [field.name for field in msg.fields]
+def _field_name(field: Any) -> str:
+    return str(getattr(field, "name"))
+
+
+def _field_offset(field: Any) -> int:
+    return int(getattr(field, "offset"))
+
+
+def _field_datatype(field: Any) -> int:
+    return int(getattr(field, "datatype"))
+
+
+def _field_count(field: Any) -> int:
+    return int(getattr(field, "count", 1) or 1)
+
+
+def _message_field_names(msg: Any) -> list[str]:
+    return [_field_name(field) for field in msg.fields]
 
 
 def _normalize_selected_fields(
@@ -89,60 +95,105 @@ def _normalize_selected_fields(
 
 
 def _field_specs_from_msg(
-    msg: PointCloud2,
+    msg: Any,
     selected_fields: Sequence[str],
 ) -> list[dict[str, Any]]:
-    field_map = {field.name: field for field in msg.fields}
+    field_map = {_field_name(field): field for field in msg.fields}
     specs: list[dict[str, Any]] = []
 
     for name in selected_fields:
         field = field_map[name]
         specs.append(
             {
-                "name": field.name,
-                "datatype": field.datatype,
-                "count": field.count,
+                "name": _field_name(field),
+                "datatype": _field_datatype(field),
+                "count": _field_count(field),
             }
         )
 
     return specs
 
 
-def _to_python_value(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
+def _point_data_as_bytes(data: Any) -> bytes:
+    if isinstance(data, bytes):
+        return data
 
-    return value
+    if isinstance(data, bytearray):
+        return bytes(data)
+
+    if isinstance(data, memoryview):
+        return data.tobytes()
+
+    if hasattr(data, "tobytes"):
+        return data.tobytes()
+
+    return bytes(data)
+
+
+def _read_field_value(
+    data: bytes,
+    base_offset: int,
+    field: Any,
+    endian_prefix: str,
+) -> Any:
+    datatype = _field_datatype(field)
+    count = _field_count(field)
+    offset = base_offset + _field_offset(field)
+
+    if datatype not in POINTFIELD_STRUCT:
+        raise ValueError(f"Unsupported PointField datatype: {datatype}")
+
+    struct_char, size = POINTFIELD_STRUCT[datatype]
+    fmt = endian_prefix + (struct_char * count)
+    values = struct.unpack_from(fmt, data, offset)
+
+    if count == 1:
+        return values[0]
+
+    return list(values)
+
+
+def _value_has_nan(value: Any) -> bool:
+    if isinstance(value, float):
+        return math.isnan(value)
+
+    if isinstance(value, (list, tuple)):
+        return any(_value_has_nan(item) for item in value)
+
+    return False
 
 
 def _point_rows_from_msg(
-    msg: PointCloud2,
+    msg: Any,
     selected_fields: Sequence[str],
     skip_nans: bool,
 ) -> list[list[Any]]:
-    raw_points = point_cloud2.read_points(
-        msg,
-        field_names=list(selected_fields),
-        skip_nans=skip_nans,
-    )
+    field_map = {_field_name(field): field for field in msg.fields}
+    selected_field_objs = [field_map[name] for name in selected_fields]
+
+    data = _point_data_as_bytes(msg.data)
+    width = int(msg.width)
+    height = int(msg.height)
+    point_step = int(msg.point_step)
+    row_step = int(msg.row_step)
+    endian_prefix = ">" if bool(msg.is_bigendian) else "<"
 
     rows: list[list[Any]] = []
 
-    for point in raw_points:
-        if hasattr(point, "dtype") and point.dtype.names:
-            row = [_to_python_value(point[name]) for name in selected_fields]
-        elif isinstance(point, dict):
-            row = [_to_python_value(point[name]) for name in selected_fields]
-        else:
-            row = [_to_python_value(value) for value in point]
+    for row_index in range(height):
+        row_base = row_index * row_step
 
-        if skip_nans and any(
-            isinstance(value, float) and math.isnan(value)
-            for value in row
-        ):
-            continue
+        for col_index in range(width):
+            point_base = row_base + col_index * point_step
+            row = [
+                _read_field_value(data, point_base, field, endian_prefix)
+                for field in selected_field_objs
+            ]
 
-        rows.append(row)
+            if skip_nans and any(_value_has_nan(value) for value in row):
+                continue
+
+            rows.append(row)
 
     return rows
 
@@ -174,6 +225,7 @@ def extract_lidar_bag_to_pcd(
     start_index: int = 0,
     end_index: int | None = None,
     storage_id: str = "auto",
+    backend: str = "auto",
     skip_nans: bool = True,
     use_timestamp_filename: bool = True,
 ) -> dict[str, Any]:
@@ -191,82 +243,74 @@ def extract_lidar_bag_to_pcd(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    reader = _open_reader(bag_path, storage_id)
-    topic_type_map = {
-        topic_metadata.name: topic_metadata.type
-        for topic_metadata in reader.get_all_topics_and_types()
-    }
-
-    pointcloud_topics = {
-        name
-        for name, msg_type in topic_type_map.items()
-        if msg_type == "sensor_msgs/msg/PointCloud2"
-    }
-
-    if topics:
-        selected_topics = set(topics)
-    else:
-        selected_topics = pointcloud_topics
-
-    selected_topics = selected_topics & pointcloud_topics
-
-    if not selected_topics:
-        raise ValueError(
-            "저장 가능한 PointCloud2 토픽이 없습니다. "
-            f"available_pointcloud_topics={sorted(pointcloud_topics)}"
-        )
-
-    matched_frame_index = 0
     saved_frame_count = 0
     saved_paths: list[str] = []
 
-    while reader.has_next():
-        topic, serialized_data, timestamp = reader.read_next()
+    with open_rosbag_reader(
+        bag_path=bag_path,
+        backend=backend,
+        storage_id=storage_id,
+    ) as reader:
+        topic_type_map = reader.topic_type_map
+        pointcloud_topics = {
+            name
+            for name, msg_type in topic_type_map.items()
+            if msg_type == POINTCLOUD2_MSG_TYPE
+        }
 
-        if topic not in selected_topics:
-            continue
+        if topics:
+            selected_topics = set(topics)
+        else:
+            selected_topics = pointcloud_topics
 
-        msg_type = get_message(topic_type_map[topic])
-        msg = deserialize_message(serialized_data, msg_type)
+        selected_topics = selected_topics & pointcloud_topics
 
-        if not isinstance(msg, PointCloud2):
-            continue
+        if not selected_topics:
+            raise ValueError(
+                "저장 가능한 PointCloud2 토픽이 없습니다. "
+                f"available_pointcloud_topics={sorted(pointcloud_topics)}"
+            )
 
-        if matched_frame_index < start_index:
+        matched_frame_index = 0
+
+        for record in reader.messages(topics=selected_topics):
+            msg = record.msg
+
+            if matched_frame_index < start_index:
+                matched_frame_index += 1
+                continue
+
+            if end_index is not None and matched_frame_index > end_index:
+                break
+
+            if (matched_frame_index - start_index) % every_n != 0:
+                matched_frame_index += 1
+                continue
+
+            available_fields = _message_field_names(msg)
+            selected_fields = _normalize_selected_fields(fields, available_fields)
+            field_specs = _field_specs_from_msg(msg, selected_fields)
+            rows = _point_rows_from_msg(msg, selected_fields, skip_nans)
+
+            output_path = _output_file_path(
+                output_dir=output_dir,
+                topic=record.topic,
+                frame_index=matched_frame_index,
+                timestamp=record.timestamp,
+                use_timestamp_filename=use_timestamp_filename,
+            )
+
+            export_pcd(
+                points=rows,
+                output_path=output_path,
+                fields=selected_fields,
+                field_specs=field_specs,
+                pcd_format=pcd_format,
+            )
+
+            saved_paths.append(str(output_path))
+            saved_frame_count += 1
             matched_frame_index += 1
-            continue
-
-        if end_index is not None and matched_frame_index > end_index:
-            break
-
-        if (matched_frame_index - start_index) % every_n != 0:
-            matched_frame_index += 1
-            continue
-
-        available_fields = _message_field_names(msg)
-        selected_fields = _normalize_selected_fields(fields, available_fields)
-        field_specs = _field_specs_from_msg(msg, selected_fields)
-        rows = _point_rows_from_msg(msg, selected_fields, skip_nans)
-
-        output_path = _output_file_path(
-            output_dir=output_dir,
-            topic=topic,
-            frame_index=matched_frame_index,
-            timestamp=timestamp,
-            use_timestamp_filename=use_timestamp_filename,
-        )
-
-        export_pcd(
-            points=rows,
-            output_path=output_path,
-            fields=selected_fields,
-            field_specs=field_specs,
-            pcd_format=pcd_format,
-        )
-
-        saved_paths.append(str(output_path))
-        saved_frame_count += 1
-        matched_frame_index += 1
 
     return {
         "bag_path": str(bag_path),

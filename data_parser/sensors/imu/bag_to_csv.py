@@ -3,14 +3,7 @@
 Supported message types:
 - sensor_msgs/msg/Imu
 
-Saved fields:
-- timestamp
-- frame_id
-- orientation x/y/z/w
-- angular_velocity x/y/z
-- linear_acceleration x/y/z
-
-Covariance fields are optional.
+This version can read bags without ROS2 by using the pure-python rosbags backend.
 """
 
 from __future__ import annotations
@@ -20,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-import yaml
+from data_parser.sources.rosbag_reader import detect_storage_id, open_rosbag_reader
 
 
 IMU_TYPE = "sensor_msgs/msg/Imu"
@@ -46,42 +39,6 @@ BASE_IMU_CSV_FIELDNAMES = [
     "linear_acceleration_y",
     "linear_acceleration_z",
 ]
-
-
-def detect_storage_id(bag_path: str | Path) -> str:
-    """Detect ROS2 bag storage type from metadata.yaml or bag file extension."""
-    bag_path = Path(bag_path)
-    metadata_path = bag_path / "metadata.yaml"
-
-    if metadata_path.exists():
-        with metadata_path.open("r", encoding="utf-8") as f:
-            metadata = yaml.safe_load(f) or {}
-
-        storage_id = (
-            metadata.get("rosbag2_bagfile_information", {})
-            .get("storage_identifier")
-        )
-        if storage_id:
-            return str(storage_id)
-
-    if not bag_path.exists():
-        raise FileNotFoundError(f"ROS2 bag path does not exist: {bag_path}")
-
-    if not bag_path.is_dir():
-        raise NotADirectoryError(f"ROS2 bag path must be a directory: {bag_path}")
-
-    names = [p.name for p in bag_path.iterdir()]
-
-    if any(name.endswith(".mcap") for name in names):
-        return "mcap"
-
-    if any(name.endswith(".db3") for name in names):
-        return "sqlite3"
-
-    raise RuntimeError(
-        f"Cannot detect rosbag storage type in: {bag_path}\n"
-        "Expected .mcap or .db3 file, or metadata.yaml with storage_identifier."
-    )
 
 
 def sanitize_topic_name(topic_name: str) -> str:
@@ -183,85 +140,77 @@ def extract_imu_rosbag_to_csv(
     output_dir: str | Path = "imu_csv_output",
     topics: Iterable[str] | None = None,
     include_covariance: bool = False,
+    backend: str = "auto",
+    storage_id: str = "auto",
 ) -> list[Path]:
     """Extract sensor_msgs/msg/Imu topics from a ROS2 bag to CSV files."""
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
-    from rosidl_runtime_py.utilities import get_message
-
     bag_path = Path(bag_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    storage_id = detect_storage_id(bag_path)
-    print(f"[INFO] Detected storage_id: {storage_id}")
+    if storage_id == "auto":
+        try:
+            detected_storage_id = detect_storage_id(bag_path)
+        except Exception:
+            detected_storage_id = "auto"
+    else:
+        detected_storage_id = storage_id
 
-    storage_options = rosbag2_py.StorageOptions(
-        uri=str(bag_path),
-        storage_id=storage_id,
-    )
-    converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format="cdr",
-        output_serialization_format="cdr",
-    )
+    print(f"[INFO] backend: {backend}")
+    print(f"[INFO] Detected storage_id: {detected_storage_id}")
 
-    reader = rosbag2_py.SequentialReader()
-    reader.open(storage_options, converter_options)
-
-    topic_types = reader.get_all_topics_and_types()
-    type_map = {t.name: t.type for t in topic_types}
-    selected_topics = set(topics) if topics else set(type_map.keys())
-
-    print("[INFO] Topics in bag:")
-    for topic, msg_type in type_map.items():
-        mark = "SUPPORTED" if msg_type in SUPPORTED_IMU_ROSBAG_TYPES else "SKIP"
-        print(f"  {topic:40s} {msg_type:35s} {mark}")
-
+    selected_topic_set = set(topics) if topics else None
     fieldnames = get_fieldnames(include_covariance=include_covariance)
 
     writers: dict[str, csv.DictWriter] = {}
     files = {}
-    msg_classes = {}
     output_paths: list[Path] = []
 
-    try:
-        while reader.has_next():
-            topic, data, t_nsec = reader.read_next()
+    with open_rosbag_reader(
+        bag_path=bag_path,
+        backend=backend,
+        storage_id=detected_storage_id,
+    ) as reader:
+        type_map = reader.topic_type_map
 
-            if topic not in selected_topics:
-                continue
+        print("[INFO] Topics in bag:")
+        for topic, msg_type in type_map.items():
+            mark = "SUPPORTED" if msg_type in SUPPORTED_IMU_ROSBAG_TYPES else "SKIP"
+            print(f"  {topic:40s} {msg_type:35s} {mark}")
 
-            msg_type = type_map.get(topic)
-            if msg_type not in SUPPORTED_IMU_ROSBAG_TYPES:
-                continue
+        target_topics = selected_topic_set if selected_topic_set else set(type_map.keys())
 
-            if topic not in msg_classes:
-                msg_classes[topic] = get_message(msg_type)
+        try:
+            for record in reader.messages(topics=target_topics):
+                topic = record.topic
+                msg_type = record.msg_type
 
-            msg = deserialize_message(data, msg_classes[topic])
-            row = imu_message_to_row(
-                msg=msg,
-                bag_time_nsec=t_nsec,
-                include_covariance=include_covariance,
-            )
+                if msg_type not in SUPPORTED_IMU_ROSBAG_TYPES:
+                    continue
 
-            if topic not in writers:
-                output_path = output_dir / f"{sanitize_topic_name(topic)}.csv"
-                f = output_path.open("w", newline="", encoding="utf-8")
-                files[topic] = f
+                row = imu_message_to_row(
+                    msg=record.msg,
+                    bag_time_nsec=record.timestamp,
+                    include_covariance=include_covariance,
+                )
 
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writers[topic] = writer
-                output_paths.append(output_path)
+                if topic not in writers:
+                    output_path = output_dir / f"{sanitize_topic_name(topic)}.csv"
+                    f = output_path.open("w", newline="", encoding="utf-8")
+                    files[topic] = f
 
-                print(f"[INFO] Writing {topic} -> {output_path}")
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writers[topic] = writer
+                    output_paths.append(output_path)
 
-            writers[topic].writerow(row)
+                    print(f"[INFO] Writing {topic} -> {output_path}")
 
-    finally:
-        for f in files.values():
-            f.close()
+                writers[topic].writerow(row)
+
+        finally:
+            for f in files.values():
+                f.close()
 
     if not output_paths:
         print("[WARN] No IMU CSV files were created.")
@@ -272,7 +221,6 @@ def extract_imu_rosbag_to_csv(
     return output_paths
 
 
-# GNSS 쪽 함수명과 비슷하게 쓰고 싶을 때를 위한 alias
 extract_rosbag_to_csv = extract_imu_rosbag_to_csv
 
 
@@ -293,6 +241,17 @@ def main() -> None:
         action="store_true",
         help="Also save orientation/angular_velocity/linear_acceleration covariance arrays.",
     )
+    parser.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "rosbags", "ros2"],
+        help="bag reader backend. Windows 배포는 rosbags 권장.",
+    )
+    parser.add_argument(
+        "--storage-id",
+        default="auto",
+        help="rosbag2 storage id: auto, sqlite3, mcap. ros2 backend에서 주로 사용.",
+    )
 
     args = parser.parse_args()
 
@@ -301,6 +260,8 @@ def main() -> None:
         output_dir=args.output_dir,
         topics=args.topics,
         include_covariance=args.include_covariance,
+        backend=args.backend,
+        storage_id=args.storage_id,
     )
 
 

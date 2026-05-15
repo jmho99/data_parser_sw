@@ -60,6 +60,12 @@ def add_lidar_subparser(sensor_subparsers) -> None:
         help="rosbag2 storage id: auto, sqlite3, mcap",
     )
     bag_pcd.add_argument(
+        "--backend",
+        default="auto",
+        choices=["auto", "rosbags", "ros2"],
+        help="bag reader backend. Windows 배포는 rosbags 권장.",
+    )
+    bag_pcd.add_argument(
         "--skip-nans",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -115,6 +121,7 @@ def run_lidar_command(args: argparse.Namespace) -> None:
         start_index=args.start_index,
         end_index=args.end_index,
         storage_id=args.storage_id,
+        backend=args.backend,
         skip_nans=args.skip_nans,
         use_timestamp_filename=args.timestamp_filename,
     )
