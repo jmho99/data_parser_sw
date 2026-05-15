@@ -42,16 +42,14 @@ def bag_to_video(
     storage_id: str = "auto",
     log_callback: LogCallback | None = None,
 ) -> BagToVideoResult:
-    """ROS2 bag 안의 Image / CompressedImage 토픽을 비디오 파일로 저장한다."""
-
     bag_path = Path(bag_path).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
 
     if not bag_path.exists():
         raise FileNotFoundError(f"bag 경로가 존재하지 않습니다: {bag_path}")
 
-    if not bag_path.is_dir():
-        raise NotADirectoryError(f"bag_path는 rosbag2 폴더여야 합니다: {bag_path}")
+    if not bag_path.is_dir() and bag_path.suffix.lower() not in {".db3", ".mcap"}:
+        raise NotADirectoryError(f"bag_path는 rosbag2 폴더 또는 .db3/.mcap 파일이어야 합니다: {bag_path}")
 
     output_format = _normalize_video_format(output_format)
 
@@ -242,8 +240,6 @@ def _default_codec(output_format: str) -> str:
 
 
 def _prepare_frame_for_video(image: np.ndarray) -> np.ndarray:
-    """OpenCV VideoWriter에 넣을 수 있도록 frame을 uint8 BGR 3채널로 변환한다."""
-
     frame = image
 
     if frame.dtype != np.uint8:

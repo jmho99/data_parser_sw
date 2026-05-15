@@ -143,7 +143,7 @@ def _read_field_value(
     if datatype not in POINTFIELD_STRUCT:
         raise ValueError(f"Unsupported PointField datatype: {datatype}")
 
-    struct_char, size = POINTFIELD_STRUCT[datatype]
+    struct_char, _size = POINTFIELD_STRUCT[datatype]
     fmt = endian_prefix + (struct_char * count)
     values = struct.unpack_from(fmt, data, offset)
 
@@ -235,8 +235,8 @@ def extract_lidar_bag_to_pcd(
     if not bag_path.exists():
         raise FileNotFoundError(f"rosbag 경로가 존재하지 않습니다: {bag_path}")
 
-    if not bag_path.is_dir():
-        raise ValueError(f"rosbag 입력은 폴더여야 합니다: {bag_path}")
+    if not bag_path.is_dir() and bag_path.suffix.lower() not in {".db3", ".mcap"}:
+        raise ValueError(f"rosbag 입력은 폴더 또는 .db3/.mcap 파일이어야 합니다: {bag_path}")
 
     if every_n < 1:
         raise ValueError("every_n은 1 이상이어야 합니다.")
@@ -275,6 +275,9 @@ def extract_lidar_bag_to_pcd(
 
         for record in reader.messages(topics=selected_topics):
             msg = record.msg
+
+            if record.msg_type != POINTCLOUD2_MSG_TYPE:
+                continue
 
             if matched_frame_index < start_index:
                 matched_frame_index += 1

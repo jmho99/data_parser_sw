@@ -10,7 +10,7 @@ from data_parser.utils.path_utils import ensure_parent_dir, to_path
 PathLike = Union[str, Path]
 
 # sensor_msgs/msg/PointField constants.
-# Keep these local so this exporter does not require ROS2 or sensor_msgs.
+# ROS2 없이도 쓰기 위해 직접 정의한다.
 POINTFIELD_INT8 = 1
 POINTFIELD_UINT8 = 2
 POINTFIELD_INT16 = 3
@@ -276,9 +276,8 @@ def export_pcd(
     pcd_format: str = "ascii",
 ) -> Path:
     """
-    Save point rows to a PCD file without requiring ROS2 packages.
-
-    PointCloud2 parsing is handled in sensors/lidar/bag_to_pcd.py.
+    PointCloud 데이터를 PCD로 저장한다.
+    ROS2 / sensor_msgs import 없이 동작한다.
     """
     path = to_path(output_path)
     ensure_parent_dir(path)

@@ -36,23 +36,14 @@ def bag_to_img(
     storage_id: str = "auto",
     log_callback: LogCallback | None = None,
 ) -> BagToImgResult:
-    """
-    ROS2 bag 안의 Image / CompressedImage 토픽을 이미지 파일로 저장한다.
-
-    backend:
-        auto    : rosbags를 먼저 시도하고 실패하면 rosbag2_py fallback
-        rosbags : ROS2 설치 없이 pure Python으로 읽기, Windows 배포 권장
-        ros2    : 기존 ROS2 rosbag2_py로 읽기
-    """
-
     bag_path = Path(bag_path).expanduser().resolve()
     output_dir = Path(output_dir).expanduser().resolve()
 
     if not bag_path.exists():
         raise FileNotFoundError(f"bag 경로가 존재하지 않습니다: {bag_path}")
 
-    if not bag_path.is_dir():
-        raise NotADirectoryError(f"bag_path는 rosbag2 폴더여야 합니다: {bag_path}")
+    if not bag_path.is_dir() and bag_path.suffix.lower() not in {".db3", ".mcap"}:
+        raise NotADirectoryError(f"bag_path는 rosbag2 폴더 또는 .db3/.mcap 파일이어야 합니다: {bag_path}")
 
     output_format = output_format.lower().lstrip(".")
     if output_format == "jpeg":
@@ -211,7 +202,7 @@ def _msg_data_to_numpy(data: Any, dtype: Any = np.uint8) -> np.ndarray:
 
 
 def _image_msg_to_cv_image(msg: Any) -> np.ndarray:
-    encoding = msg.encoding.lower()
+    encoding = str(msg.encoding).lower()
 
     if encoding in {"bgr8", "rgb8", "bgra8", "rgba8"}:
         image = _reshape_image_data(msg, dtype=np.uint8, channels=4 if "a8" in encoding else 3)
@@ -229,7 +220,7 @@ def _image_msg_to_cv_image(msg: Any) -> np.ndarray:
     if encoding in {"mono16", "16uc1"}:
         image = _reshape_image_data(msg, dtype=np.uint16, channels=1)
 
-        if msg.is_bigendian:
+        if bool(msg.is_bigendian):
             image = image.byteswap()
 
         return image

@@ -1,0 +1,25 @@
+# requirements.txt
+
+# ROS/rosbag2 reader without ROS2 installation
+rosbags
+
+# Numeric / binary data handling
+numpy
+
+# Image / video processing
+opencv-python
+
+# GUI
+PySide6
+
+# Config files
+PyYAML
+
+# Progress display
+tqdm
+
+# MCAP / compressed bag support
+mcap
+mcap-ros2-support
+zstandard
+lz4
